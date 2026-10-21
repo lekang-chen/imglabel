@@ -1,0 +1,8 @@
+1 couch
+2 couch
+3 book
+4 dining table
+5 book
+6 book
+7 book
+8 potted plant

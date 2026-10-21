@@ -87,10 +87,18 @@ class JobManager:
         self.lock = threading.Lock()
         self.worker = None
 
-    def submit(self, job):
+    def submit(self, job, runner=None):
+        """
+        提交一个任务。
+
+        runner : 可选的自定义执行函数，签名 runner(job)。
+                 不传就用内置的 run_prelabel_job（默认走 YOLO-World + seg 的首轮预标注）。
+                 app.py 里传自定义 runner，是为了同时支持"首轮预标注"和"用自训模型回标"
+                 两种模式，并且避免内置 worker 重复执行同一个 job。
+        """
         with self.lock:
             self.jobs[job.id] = job
-        self.queue.put(job)
+        self.queue.put((job, runner))
         self._ensure_worker()
         return job
 
@@ -105,12 +113,19 @@ class JobManager:
 
     def _run(self):
         while True:
-            job = self.queue.get()
-            if job is None:
+            item = self.queue.get()
+            if item is None:
                 break
+            job, runner = item
             try:
                 job.status = "running"
-                run_prelabel_job(job)
+                if runner is not None:
+                    runner(job)
+                else:
+                    run_prelabel_job(job)
+                # 只有真的跑完才置为 done。
+                # 注意：不能只看 done == total，因为单图出错时结果里会带 error 字段，
+                # 但整体任务仍然算完成。
                 job.status = "done"
             except Exception as exc:  # noqa: BLE001
                 job.status = "failed"
@@ -280,7 +295,8 @@ def iou(box_a, box_b):
 # 主流程
 # ---------------------------------------------------------------------------
 
-def run_prelabel_job(job, image_dir, class_names, conf=0.25, iou_thresh=0.30):
+def run_prelabel_job(job, image_dir=None, class_names=None,
+                     conf=0.15, iou_thresh=0.30):
     """
     执行一次完整的预标注任务。
 
@@ -288,13 +304,25 @@ def run_prelabel_job(job, image_dir, class_names, conf=0.25, iou_thresh=0.30):
       job        : PrelabelJob 对象，用于更新进度
       image_dir  : 图片目录
       class_names: 十类词表（英文名）
-      conf       : 置信度阈值。调低一点可以捞回更多漏标的对象，
-                    反正后面要人工审；这符合"机器做粗"的设计。
+      conf       : 置信度阈值。取 0.15 而不是常见的 0.25，是实测出来的：
+                    在我们这 150 张图上，conf=0.25 只能产出 913 个草稿对象、
+                    有 12 张图一个对象都检不出；降到 0.15 后草稿对象涨到 1302 个、
+                    零草稿图降到 8 张。
+                    理由是"草稿宁多勿漏"——多出来的误检人点一下就能删，
+                    但漏掉的对象人根本看不见，就不会去改，
+                    最终会导致人工修正记录失真、训练数据也少了正样本。
       iou_thresh : 框与掩码的匹配阈值
 
     返回: {图片名: {"objects": [...], "source": "..."}}
     """
     from core import CLASSES
+
+    # 允许省略参数（JobManager 的默认执行路径就是只传 job）
+    if image_dir is None:
+        image_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                 "data", "images")
+    if class_names is None:
+        class_names = CLASSES
 
     seg_model = _load_seg_model()
     world_model = _load_world_model()

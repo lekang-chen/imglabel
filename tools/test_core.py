@@ -215,6 +215,56 @@ def test_edge_cases():
     check("类别统计正确", cc.get("person") == 1 and cc.get("cup") == 1)
 
 
+def test_png_roundtrip():
+    """
+    [7] PNG 存盘再读回，值必须不变。
+
+    这是真实踩过的坑：语义 PNG 原来用 mode="P"（调色板模式）保存，
+    PNG 把像素值当成调色板索引，重新打开时索引被重映射，类别编号全乱，
+    自检直接报"语义图只覆盖 2 个类别"。
+
+    这个测试就是防止它再犯：存盘 -> 读回 -> 值必须完全一致。
+    """
+    print("\n[7] PNG 存盘往返一致性")
+    import tempfile
+    from core import semantic_from_objects, instance_from_objects
+    from PIL import Image
+
+    objs = [Object("person", [[0.1, 0.1], [0.5, 0.1], [0.5, 0.5], [0.1, 0.5]]),
+            Object("cup", [[0.6, 0.6], [0.9, 0.6], [0.9, 0.9], [0.6, 0.9]]),
+            Object("book", [[0.2, 0.7], [0.4, 0.7], [0.4, 0.85], [0.2, 0.85]])]
+
+    # --- 语义图 ---
+    sem = semantic_from_objects(objs, 100, 100)
+    check("语义图用 L 模式（不是调色板 P）", sem.mode == "L", "mode=%s" % sem.mode)
+    with tempfile.TemporaryDirectory() as td:
+        p = os.path.join(td, "sem.png")
+        sem.save(p)
+        back = Image.open(p)
+        check("语义图存回后 mode 仍为 L", back.mode == "L", "mode=%s" % back.mode)
+        vals = set(back.getdata())
+        check("语义图存回后类别编号未丢失",
+              {0, 6, 9, 255} <= vals, str(sorted(vals)))
+        check("语义图覆盖 3 个前景类别 + 背景",
+              len([v for v in vals if v != 255]) == 3, str(sorted(vals)))
+
+    # --- 实例图 ---
+    inst, mapping = instance_from_objects(objs, 100, 100)
+    check("实例映射表条数 = 对象数", len(mapping) == 3, str(mapping))
+    check("实例映射表类别正确",
+          mapping[1][0] == "person" and mapping[2][0] == "cup"
+          and mapping[3][0] == "book", str(mapping))
+
+    # --- 实例数超过 uint8 上限必须报错，而不是静默溢出 ---
+    many = [Object("cup", [[0.0, 0.0], [0.01, 0.0], [0.01, 0.01], [0.0, 0.01]])
+            for _ in range(300)]
+    try:
+        instance_from_objects(many, 100, 100)
+        check("实例数超 254 时抛异常", False, "没抛异常")
+    except ValueError:
+        check("实例数超 254 时抛异常", True)
+
+
 def test_classes():
     print("\n[6] 十类词表")
     expect = ["person", "chair", "dining table", "couch", "tv",
@@ -233,6 +283,7 @@ if __name__ == "__main__":
     test_three_formats()
     test_export_and_validate()
     test_edge_cases()
+    test_png_roundtrip()
     print("\n" + "=" * 60)
     print("结果: %d 通过, %d 失败" % (PASS, FAIL))
     print("=" * 60)

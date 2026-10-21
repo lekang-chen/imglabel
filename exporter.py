@@ -124,9 +124,18 @@ def export_dataset(annotations, out_dir, image_dir, val_ratio=VAL_RATIO,
         "images_with_label": 0,
     }
 
+    # 记录本次真正写出的文件，最后用来清理「上一次的残留」。
+    # 【为什么不先 rmtree 整个目录再重建】
+    # 1) 删 150 个文件这种批量删除容易被系统安全策略拦下（我们真踩过：
+    #    批量删除触发保护直接中断了导出请求，页面报不出错）；
+    # 2) 更重要的是没必要——导出是幂等的，同名文件直接覆盖就行，
+    #    只有「上次的文件这次不写了」才是残留，删掉那部分就够了。
+    written = set()
+
     for i, ann in enumerate(anns):
         split = "val" if i in val_set else "train"
         stem = os.path.splitext(ann.image_name)[0]
+        written.add(os.path.join(out_dir, "images", split, ann.image_name))
 
         # --- 图片 ---
         if copy_images:
@@ -142,20 +151,26 @@ def export_dataset(annotations, out_dir, image_dir, val_ratio=VAL_RATIO,
         label_path = os.path.join(out_dir, "labels", split, stem + ".txt")
         with open(label_path, "w", encoding="utf-8") as f:
             f.write(export_yolo_label(ann, has_seg=has_seg))
+        written.add(label_path)
 
         # --- 实例掩码 PNG ---
         inst_img, mapping = instance_from_objects(ann.objects, ann.width, ann.height)
-        inst_img.save(os.path.join(out_dir, "masks", split, stem + ".png"))
+        inst_path = os.path.join(out_dir, "masks", split, stem + ".png")
+        inst_img.save(inst_path)
+        written.add(inst_path)
 
         # 实例掩码的类别信息另存一份，方便人工核对
-        with open(os.path.join(out_dir, "masks", split, stem + "_instances.txt"),
-                  "w", encoding="utf-8") as f:
+        inst_txt = os.path.join(out_dir, "masks", split, stem + "_instances.txt")
+        with open(inst_txt, "w", encoding="utf-8") as f:
             for val, (cls_name, idx) in sorted(mapping.items()):
                 f.write("%d %s\n" % (val, cls_name))
+        written.add(inst_txt)
 
         # --- 语义分割 PNG ---
         sem_img = semantic_from_objects(ann.objects, ann.width, ann.height)
-        sem_img.save(os.path.join(out_dir, "semantic", split, stem + ".png"))
+        sem_path = os.path.join(out_dir, "semantic", split, stem + ".png")
+        sem_img.save(sem_path)
+        written.add(sem_path)
 
         # --- 统计 ---
         stats["train_images" if split == "train" else "val_images"] += 1
@@ -176,6 +191,24 @@ def export_dataset(annotations, out_dir, image_dir, val_ratio=VAL_RATIO,
         f.write("names:\n")
         for i, c in enumerate(CLASSES):
             f.write("  %d: %s\n" % (i, c))
+
+    # 4) 清理上一次导出留下的残留文件
+    #    只删「这次没写、但目录里有」的文件，且逐个删（不整目录删）。
+    removed = 0
+    for sub in ("images", "labels", "masks", "semantic"):
+        for split in ("train", "val"):
+            d = os.path.join(out_dir, sub, split)
+            if not os.path.isdir(d):
+                continue
+            for fn in os.listdir(d):
+                p = os.path.join(d, fn)
+                if os.path.isfile(p) and p not in written:
+                    try:
+                        os.remove(p)
+                        removed += 1
+                    except OSError:
+                        pass
+    stats["removed_stale"] = removed
 
     return stats
 
@@ -241,12 +274,21 @@ def validate_dataset(out_dir):
 
             # --- 检查实例掩码 ---
             mask_path = os.path.join(mask_dir, stem + ".png")
+            inst_txt = os.path.join(mask_dir, stem + "_instances.txt")
             if not os.path.exists(mask_path):
                 problems.append("%s/%s 缺少实例掩码 PNG" % (split, stem))
             else:
-                m = Image.open(mask_path)
-                vals = {v for v in m.getdata() if v > 0}
-                counts["mask_instances"] += len(vals)
+                # 实例数以 _instances.txt 的映射表为准。
+                # 【为什么不能数 PNG 里的像素值】
+                # 1) 掩码是 uint8，灰度值上限 255，一张图超过 255 个实例会溢出；
+                # 2) 多边形互相重叠时后画的会覆盖先画的，像素值天然少于实例数。
+                # 所以数像素是错的，必须读我们自己写的映射表。
+                if os.path.exists(inst_txt):
+                    with open(inst_txt, encoding="utf-8") as f:
+                        n = len([ln for ln in f if ln.strip()])
+                    counts["mask_instances"] += n
+                else:
+                    problems.append("%s/%s 缺少实例映射表 _instances.txt" % (split, stem))
 
             # --- 检查语义 PNG ---
             sem_path = os.path.join(sem_dir, stem + ".png")

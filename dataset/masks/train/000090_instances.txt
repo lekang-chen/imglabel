@@ -1,0 +1,7 @@
+1 person
+2 chair
+3 person
+4 laptop
+5 chair
+6 couch
+7 laptop

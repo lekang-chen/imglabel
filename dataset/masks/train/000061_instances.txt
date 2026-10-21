@@ -1,0 +1,23 @@
+1 dining table
+2 cup
+3 cup
+4 cup
+5 cup
+6 cup
+7 cup
+8 cup
+9 dining table
+10 cup
+11 cup
+12 cup
+13 cup
+14 cup
+15 cup
+16 cup
+17 book
+18 cup
+19 person
+20 book
+21 person
+22 cup
+23 cup

@@ -1,0 +1,6 @@
+1 chair
+2 chair
+3 chair
+4 dining table
+5 chair
+6 chair

@@ -1,0 +1,15 @@
+1 couch
+2 tv
+3 chair
+4 book
+5 couch
+6 couch
+7 tv
+8 chair
+9 chair
+10 book
+11 chair
+12 chair
+13 potted plant
+14 dining table
+15 book

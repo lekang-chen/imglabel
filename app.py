@@ -241,15 +241,14 @@ def api_prelabel_start():
 
     state = load_state()
     job_id = "job_%d_%d" % (int(time.time()), len(job_manager.jobs))
-    job = job_manager.submit(_new_job(job_id, len(images)))
+    job = _new_job(job_id, len(images))
 
-    def worker():
+    def runner(job):
+        """交给 JobManager 的后台 worker 线程执行。"""
         if mode == "custom":
             weights = body.get("weights") or os.path.join(MODEL_DIR, "best.pt")
             if not os.path.exists(weights):
-                job.status = "failed"
-                job.message = "找不到自训权重: %s" % weights
-                return
+                raise FileNotFoundError("找不到自训权重: %s" % weights)
             run_relabel_job(job, IMAGE_DIR, weights,
                             round_tag="R%d" % (state.get("round", 1) + 1))
         else:
@@ -284,7 +283,9 @@ def api_prelabel_start():
         log_action(st, "预标注完成", "%s, %d 张图" % (mode, len(job.results)))
         save_state(st)
 
-    threading.Thread(target=worker, daemon=True).start()
+    # 交给 JobManager 的后台 worker 线程跑，主线程立刻返回 job_id，
+    # 前端轮询 /api/prelabel/progress/<job_id> 画进度条。
+    job_manager.submit(job, runner)
     return jsonify({"ok": True, "job_id": job_id, "total": len(images)})
 
 
@@ -329,12 +330,10 @@ def api_export():
     if not anns:
         return jsonify({"error": "还没有任何标注数据，先跑预标注"}), 400
 
-    # 清空旧的导出（保留目录本身）
-    if os.path.isdir(DATASET_DIR):
-        for sub in ("images", "labels", "masks", "semantic"):
-            p = os.path.join(DATASET_DIR, sub)
-            if os.path.isdir(p):
-                shutil.rmtree(p)
+    # 不清空整个 dataset 目录。
+    # 导出是幂等的：同名文件直接覆盖，exporter 只会删掉「上次有、这次没有」的残留。
+    # 之前这里用 shutil.rmtree 整目录删，150 个文件的批量删除会被系统安全策略拦下，
+    # 表现为页面请求直接断开、什么错误都看不到。
     os.makedirs(DATASET_DIR, exist_ok=True)
 
     stats = export_dataset(anns, DATASET_DIR, IMAGE_DIR,

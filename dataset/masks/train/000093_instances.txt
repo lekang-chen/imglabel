@@ -1,0 +1,14 @@
+1 laptop
+2 tv
+3 cup
+4 person
+5 person
+6 tv
+7 laptop
+8 cup
+9 person
+10 book
+11 person
+12 person
+13 chair
+14 chair

@@ -1,0 +1,14 @@
+1 laptop
+2 tv
+3 bottle
+4 tv
+5 laptop
+6 laptop
+7 tv
+8 book
+9 person
+10 person
+11 book
+12 person
+13 book
+14 book

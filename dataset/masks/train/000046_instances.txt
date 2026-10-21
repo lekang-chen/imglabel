@@ -1,0 +1,12 @@
+1 couch
+2 couch
+3 person
+4 bottle
+5 person
+6 cup
+7 cup
+8 person
+9 chair
+10 person
+11 dining table
+12 book

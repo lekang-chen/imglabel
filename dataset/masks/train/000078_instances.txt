@@ -1,0 +1,15 @@
+1 tv
+2 person
+3 book
+4 book
+5 book
+6 book
+7 book
+8 book
+9 book
+10 book
+11 book
+12 laptop
+13 tv
+14 couch
+15 chair

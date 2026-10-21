@@ -1,0 +1,28 @@
+1 person
+2 person
+3 person
+4 chair
+5 chair
+6 person
+7 chair
+8 person
+9 person
+10 chair
+11 chair
+12 chair
+13 chair
+14 person
+15 chair
+16 person
+17 person
+18 person
+19 chair
+20 person
+21 chair
+22 person
+23 chair
+24 person
+25 dining table
+26 potted plant
+27 dining table
+28 chair

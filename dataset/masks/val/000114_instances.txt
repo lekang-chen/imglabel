@@ -1,0 +1,6 @@
+1 bottle
+2 bottle
+3 couch
+4 bottle
+5 couch
+6 bottle

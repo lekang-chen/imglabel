@@ -1,0 +1,27 @@
+1 chair
+2 potted plant
+3 chair
+4 couch
+5 tv
+6 chair
+7 potted plant
+8 chair
+9 chair
+10 chair
+11 book
+12 chair
+13 tv
+14 couch
+15 chair
+16 chair
+17 chair
+18 chair
+19 potted plant
+20 potted plant
+21 chair
+22 bottle
+23 potted plant
+24 dining table
+25 bottle
+26 bottle
+27 cup

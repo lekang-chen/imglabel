@@ -1,0 +1,21 @@
+1 chair
+2 laptop
+3 couch
+4 bottle
+5 couch
+6 book
+7 book
+8 book
+9 chair
+10 laptop
+11 dining table
+12 cup
+13 couch
+14 bottle
+15 tv
+16 book
+17 book
+18 laptop
+19 cup
+20 book
+21 cup

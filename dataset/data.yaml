@@ -1,0 +1,16 @@
+# 由 exporter.py 自动生成，请勿手工修改
+path: D:/imglabel/dataset
+train: images/train
+val: images/val
+nc: 10
+names:
+  0: person
+  1: chair
+  2: dining table
+  3: couch
+  4: tv
+  5: laptop
+  6: cup
+  7: bottle
+  8: potted plant
+  9: book

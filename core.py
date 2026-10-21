@@ -312,8 +312,14 @@ def semantic_from_objects(objects, width, height):
     不区分类内不同个体（任务书附录明确写了这一点）。
     所以这里所有同类别的多边形都涂进同一个类别索引值里。
 
-    返回：PIL Image（模式 'P'），每个像素存的是类别编号 0~9。
+    返回：PIL Image（模式 'L'），每个像素存的是类别编号 0~9。
     类别编号 255 保留给「背景/未标注」，这是社区通用约定。
+
+    【为什么用 'L' 而不是 'P'（调色板模式）】
+    曾经写成 mode="P"，看起来没问题，但 PNG 存盘时会把像素值当成调色板索引，
+    重新打开时索引被重新映射，类别编号全乱——自检立刻报"语义图只覆盖 2 个类别"。
+    'L'（灰度）模式是逐像素存真实数值，存什么读出来就是什么，
+    这才是我们需要的：像素值 == 类别编号。
     """
     import cv2
     import numpy as np
@@ -332,7 +338,7 @@ def semantic_from_objects(objects, width, height):
         # 注意这里用 -1：语义图是「合并」，后面的同类目标也要写进来。
         # 用 1 会被后面的覆盖成 0，所以必须用 -1 表示「填这个值」。
         cv2.fillPoly(sem, [pts], int(cls_id), lineType=cv2.LINE_8)
-    return Image.fromarray(sem, mode="P")
+    return Image.fromarray(sem, mode="L")
 
 
 def instance_from_objects(objects, width, height):
@@ -344,6 +350,11 @@ def instance_from_objects(objects, width, height):
     每个实例的类别和编号记录在同名 txt 里。
 
     返回：(PIL Image 灰度图, {实例值: (类别名, 序号)} 映射)
+
+    【uint8 上限说明】
+    灰度值上限 255，所以一张图最多存 254 个实例（0 留给背景）。
+    超过就抛异常——宁可在导出阶段炸掉，也不要静默溢出把实例号写回绕，
+    因为溢出会导致两个实例共用一个灰度值，训练时标签和掩码就对不上了。
     """
     import cv2
     import numpy as np
@@ -355,6 +366,10 @@ def instance_from_objects(objects, width, height):
     for obj in objects:
         if len(obj.polygon) < 3:
             continue
+        if value > 254:
+            raise ValueError(
+                "单张图的实例数超过 254（uint8 灰度值上限），"
+                "请拆分该图或改用 16 位掩码")
         pts = np.array(
             [[int(round(p[0] * (width - 1))), int(round(p[1] * (height - 1)))]
              for p in obj.polygon],
