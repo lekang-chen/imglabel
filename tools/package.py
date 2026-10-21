@@ -56,10 +56,14 @@ def copy_code(dst_root):
     """拷贝源码部分。"""
     for f in CODE_FILES:
         src = os.path.join(BASE_DIR, f)
-        if os.path.exists(src):
-            shutil.copy2(src, os.path.join(dst_root, f))
-        else:
+        if not os.path.exists(src):
             print("  跳过（不存在）: %s" % f)
+            continue
+        dst = os.path.join(dst_root, f)
+        # 带子目录的（如 data/data_source.txt）需要先建父目录，
+        # shutil.copy2 不会自动创建
+        os.makedirs(os.path.dirname(dst), exist_ok=True)
+        shutil.copy2(src, dst)
 
     for d in CODE_DIRS:
         src_dir = os.path.join(BASE_DIR, d)
@@ -220,6 +224,14 @@ def main():
             # 压缩时不能再排掉 .git——它已经在 stage 里了，
             # 排掉的话任务书要求的"包内提交历史"就丢了。
             skip = EXCLUDE_DIRS - {".git"} if INCLUDE_GIT else EXCLUDE_DIRS
+            # data/ 里只有 data_source.txt 是要进包的（数据逐张对应关系），
+            # 其余内容（images/annotations/coco）体积大且可重新生成。
+            # 所以不整体排除 data/，只把它从排除名单里去掉。
+            # 注意要在过滤子目录之前判断：此刻 root 是 stage 的各级父目录，
+            # "data" 这个名字就出现在 dirs 里。
+            if "data" in dirs and os.path.isfile(
+                    os.path.join(root, "data", "data_source.txt")):
+                skip = skip - {"data"}
             dirs[:] = [d for d in dirs if d not in skip]
             for f in files:
                 full = os.path.join(root, f)
