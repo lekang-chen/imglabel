@@ -1,58 +1,69 @@
 @echo off
 chcp 65001 >nul
-title 人机协同图像标注系统
+title Human-Machine Collaborative Image Labeling System
 cd /d "%~dp0"
 
 echo ============================================================
-echo   人机协同图像标注系统
+echo   Human-Machine Collaborative Image Labeling System
 echo ============================================================
 echo.
 
-REM ---------- 检查 Python ----------
-where python >nul 2>nul
-if errorlevel 1 (
-    echo [错误] 找不到 python，请先安装 Miniforge 并创建 imglabel 环境。
+REM ---------- pick interpreter ----------
+REM Prefer the project .venv: it has the CUDA build of torch,
+REM which is required to train on GPU. Fall back to system python.
+set "PY="
+if exist ".venv\Scripts\python.exe" (
+    set "PY=.venv\Scripts\python.exe"
+) else (
+    where python >nul 2>nul
+    if not errorlevel 1 set "PY=python"
+)
+
+if "%PY%"=="" (
+    echo [ERROR] Python not found.
     echo.
-    echo 安装步骤：
-    echo   conda create -n imglabel python=3.10 -y
-    echo   conda activate imglabel
+    echo Create the environment first:
+    echo   python -m venv .venv
+    echo   .venv\Scripts\activate
     echo   pip install -r requirements.txt
     echo.
     pause
     exit /b 1
 )
 
-REM ---------- 检查依赖 ----------
-python -c "import ultralytics, flask, psutil, cv2, numpy" >nul 2>nul
+echo [ENV] Interpreter: %PY%
+
+REM ---------- check dependencies ----------
+"%PY%" -c "import ultralytics, flask, psutil, cv2, numpy" >nul 2>nul
 if errorlevel 1 (
-    echo [提示] 依赖不完整，正在安装...
-    python -m pip install -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
+    echo [INFO] Missing dependencies, installing...
+    "%PY%" -m pip install -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
     if errorlevel 1 (
-        echo [错误] 依赖安装失败，可改用阿里云源：
+        echo [ERROR] Install failed. Try the Aliyun mirror:
         echo   pip install -r requirements.txt -i https://mirrors.aliyun.com/pypi/simple/
         pause
         exit /b 1
     )
 )
 
-REM ---------- 检查图片目录 ----------
+REM ---------- check image folder ----------
 if not exist "data\images" (
     mkdir "data\images"
 )
 dir /b "data\images" >nul 2>nul
 if errorlevel 1 (
-    echo [提示] data\images 里还没有图片。
-    echo        请把筛选好的室内场景图片放进这个目录。
+    echo [INFO] data\images is empty.
+    echo        Put the selected indoor images into this folder.
     echo.
 )
 
-echo [启动] 正在打开 http://127.0.0.1:5000 ...
-echo [提示] 关闭此窗口即可停止服务
+echo [START] Opening http://127.0.0.1:5000 ...
+echo [TIP] Close this window to stop the server
 echo.
-python app.py
+"%PY%" app.py
 
 if errorlevel 1 (
     echo.
-    echo [错误] 服务异常退出，请查看上方日志。
+    echo [ERROR] Server exited unexpectedly. See the log above.
     pause
 )

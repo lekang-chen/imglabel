@@ -20,6 +20,9 @@ python app.py
 
 浏览器会自动打开 `http://127.0.0.1:5000`。Windows 下也可直接双击 `启动.bat`。
 
+桌面已放置快捷启动器 `人机协同图像标注系统.bat`（位于桌面），双击等价于运行 `start.bat`。
+如需重建：`python tools/make_shortcut.py`（自动识别 OneDrive 重定向后的桌面路径）。
+
 ## 核心设计
 
 > **以实例掩码为唯一核心标注对象。**
