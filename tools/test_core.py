@@ -273,6 +273,64 @@ def test_classes():
     check("共 10 类", len(CLASSES) == 10)
 
 
+def test_simplify_closed_ring():
+    """闭合环抽稀不能退化成矩形（真实踩过的坑）。
+
+    背景：D-P 原本按开放折线设计，闭合环首尾同点会让首尾连线成为零长线段，
+    所有点到它的距离都很大 -> 每轮都判定必须保留 -> 行为退化。
+    实测 1000 点的圆被抽成 9 点（正八边形），面积误差 9.9%，
+    视觉上就是个方块，正是「描边看起来是矩形」的根因之一。
+    """
+    print("\n[7] 闭合环抽稀精度")
+    import math
+    from core import simplify_polygon
+
+    def area(p):
+        a = 0.0
+        for i in range(len(p)):
+            x1, y1 = p[i]
+            x2, y2 = p[(i + 1) % len(p)]
+            a += x1 * y2 - x2 * y1
+        return abs(a) / 2.0
+
+    # 圆：1000 点 -> 应保留上百点，且面积几乎无损
+    n, r = 1000, 0.3
+    circle = [[0.5 + r * math.cos(2 * math.pi * i / n),
+               0.5 + r * math.sin(2 * math.pi * i / n)] for i in range(n)]
+    out = simplify_polygon([list(p) for p in circle], max_points=180)
+    err = abs(area(circle) - area(out)) / area(circle)
+    check("圆抽稀后点数 > 40（未被压成方形）", len(out) > 40, "实际 %d 点" % len(out))
+    check("圆抽稀面积误差 < 1%", err < 0.01, "实际 %.3f%%" % (err * 100))
+
+    # 不规则闭合环
+    import random
+    random.seed(1)
+    blob = []
+    for i in range(300):
+        t = 2 * math.pi * i / 300
+        blob.append([0.5 + 0.2 * math.cos(t) + 0.03 * random.random(),
+                     0.5 + 0.35 * math.sin(t)])
+    out2 = simplify_polygon([list(p) for p in blob], max_points=180)
+    err2 = abs(area(blob) - area(out2)) / area(blob)
+    check("不规则环抽稀后点数 > 60", len(out2) > 60, "实际 %d 点" % len(out2))
+    check("不规则环面积误差 < 1%", err2 < 0.01, "实际 %.3f%%" % (err2 * 100))
+
+    # 顶点数上限必须真的生效（180 是上限，不是目标）
+    check("抽稀后不超过 max_points 上限",
+          len(out) <= 180 and len(out2) <= 180, "%d/%d" % (len(out), len(out2)))
+
+    # 简单多边形必须原样保留，不能被"简化"掉
+    L = [[0.1, 0.1], [0.5, 0.1], [0.5, 0.3], [0.3, 0.3], [0.3, 0.7], [0.1, 0.7]]
+    out3 = simplify_polygon([list(p) for p in L], max_points=180)
+    check("6 点 L 形原样保留", len(out3) == 6, "实际 %d 点" % len(out3))
+
+    # 首尾重复点的闭合环（cv2 轮廓常见）不能被吃掉
+    dup = [list(p) for p in circle] + [[circle[0][0], circle[0][1]]]
+    out4 = simplify_polygon(dup, max_points=180)
+    check("首尾重复点已去除且形状正常",
+          len(out4) > 40 and err < 0.01, "实际 %d 点" % len(out4))
+
+
 if __name__ == "__main__":
     print("=" * 60)
     print("核心逻辑自测")
@@ -284,6 +342,7 @@ if __name__ == "__main__":
     test_export_and_validate()
     test_edge_cases()
     test_png_roundtrip()
+    test_simplify_closed_ring()
     print("\n" + "=" * 60)
     print("结果: %d 通过, %d 失败" % (PASS, FAIL))
     print("=" * 60)

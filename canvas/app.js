@@ -255,23 +255,35 @@ function drawObject(o) {
     ctx.beginPath();
     pts.forEach((p, i) => i === 0 ? ctx.moveTo(p[0], p[1]) : ctx.lineTo(p[0], p[1]));
     ctx.closePath();
-    ctx.fillStyle = hexA(col, sel ? 0.34 : (hov ? 0.28 : 0.20));
+    ctx.fillStyle = hexA(col, sel ? 0.30 : (hov ? 0.26 : 0.18));
     ctx.fill();
 
-    // 描边：按轮廓走，不再用矩形框圈住
-    // 未选中时细一点、淡一点，避免满屏线条看不清图
-    ctx.strokeStyle = sel ? col : hexA(col, hov ? 0.85 : 0.55);
-    ctx.lineWidth = sel ? 2.2 : (hov ? 1.6 : 1);
-    ctx.stroke();
-
-    // 选中时在轮廓外再描一圈白边，强化"这就是我要改的那个"
+    // 描边：沿轮廓走，不套矩形框
+    //
+    // 选中的对象要「在任何背景上都看得清」，做法是描三层：
+    //   外层白边（粗）-> 暗色分隔线（中）-> 类别色细线（细）
+    // 白边打底，暗线隔开白边和填充，最后细彩线给出类别识别。
+    // 三层叠加后轮廓是"亮边 + 彩线"，不会和填充色糊在一起。
     if (sel) {
-      ctx.save();
-      ctx.strokeStyle = 'rgba(255,255,255,.9)';
-      ctx.lineWidth = 4.5;
-      ctx.globalCompositeOperation = 'destination-over';
+      // 第 1 层：外侧白色底衬
+      ctx.strokeStyle = 'rgba(255,255,255,.92)';
+      ctx.lineWidth = 5;
+      ctx.lineJoin = 'round';
       ctx.stroke();
-      ctx.restore();
+      // 第 2 层：暗色分隔，让白边和填充不粘连
+      ctx.strokeStyle = 'rgba(0,0,0,.45)';
+      ctx.lineWidth = 3;
+      ctx.stroke();
+      // 第 3 层：类别色细线
+      ctx.strokeStyle = col;
+      ctx.lineWidth = 1.8;
+      ctx.stroke();
+    } else {
+      // 未选中：细一点、淡一点，避免满屏线条看不清图
+      ctx.strokeStyle = hexA(col, hov ? 0.9 : 0.6);
+      ctx.lineWidth = hov ? 1.8 : 1.1;
+      ctx.lineJoin = 'round';
+      ctx.stroke();
     }
 
     if (S.showBox && sel) {
@@ -1109,4 +1121,10 @@ if (location.search.includes('uitest=1')) {
   d.src = '/static/demo_script.js';
   d.onerror = () => {};
   document.body.appendChild(d);
+
+  // 描边专项截图脚本（tools/shoot_stroke.js 生成，同样是临时的）
+  const st = document.createElement('script');
+  st.src = '/static/stroke_script.js';
+  st.onerror = () => {};
+  document.body.appendChild(st);
 }

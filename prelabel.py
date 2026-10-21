@@ -291,6 +291,52 @@ def iou(box_a, box_b):
     return inter / union if union > 0 else 0.0
 
 
+def mask_box_coverage(mask, box_norm, img_w, img_h):
+    """掩码落在检测框内的像素占比，取值 0~1。
+
+    为什么需要这个度量（踩过的坑）
+    ------------------------------
+    原设计靠 IoU 把 seg 掩码和 YOLO-World 检测框配对，实测匹配率是0%：
+    seg 预训练模型用的是 COCO 类别名（bed / dining table / chair），
+    YOLO-World 用的是我们自己的十类词表（person / dining table / ...），
+    两边认的根本不是同一批目标，框的位置也大量错开，IoU 恒为 0。
+    于是所有配不上的框都走兜底分支被画成矩形——
+    实测 898 个标注里745 个（83%）是纯矩形，界面上看全是方框。
+
+    改成「覆盖率」后语义就反过来了：
+      - 以框为锚（框的类别是对的，必须信框）
+      - 在所有掩码里找「有多少比例落在这个框里」最多的那个
+      - 覆盖够高就借用它的形状，类别仍然取框的类别
+    两个模型的长处都用上了：框给准确类别，掩码给真实轮廓。
+
+    为什么不用 IoU：
+    掩码可能比框大很多（长椅只切到一半）或小很多（只露出一个靠背），
+    这两种情况 IoU 都会偏低但形状其实是对的；
+    而覆盖率只看「掩码有多少落在框内」，对小物体天然宽容。
+    """
+    import numpy as np
+
+    arr = np.array(mask)
+    if arr.ndim == 3:
+        arr = arr[:, :, 0]
+    arr = (arr > 0)
+    total = int(arr.sum())
+    if total == 0:
+        return 0.0
+
+    x1, y1, x2, y2 = box_norm
+    # 归一化框 -> 像素索引区间，并裁剪到图像范围内
+    px1 = max(0, int(x1))
+    py1 = max(0, int(y1))
+    px2 = min(img_w, int(round(x2)))
+    py2 = min(img_h, int(round(y2)))
+    if px2 <= px1 or py2 <= py1:
+        return 0.0
+
+    inside = int(arr[py1:py2, px1:px2].sum())
+    return inside / float(total)
+
+
 # ---------------------------------------------------------------------------
 # 主流程
 # ---------------------------------------------------------------------------
@@ -363,10 +409,21 @@ def _prelabel_one(seg_model, world_model, img_path, class_names, conf, iou_thres
     """
     对单张图片做预标注，返回 Object 列表。
 
-    三步：
-      1. seg 模型 -> 掩码列表（每项：mask, 原始类别名, 置信度）
-      2. world 模型 -> 检测框列表（每项：框, 我们的十类类别名, 置信度）
-      3. 匹配合并 -> 最终的 Object 列表
+    【核心思路：以检测框为锚，借用掩码的形状】
+    ----------------------------------------
+    两个模型各有所长，也各有短板：
+      - YOLO-World：类别完全正确（我们的十类词表），但只有矩形框；
+      - seg 模型：形状准确（真实轮廓），但用 COCO 类别名，对不上十类。
+    实测两者按 IoU 配对成功率是 0%，配不上的框全被兜底成矩形，
+    导致 83% 的标注是方框（详见 mask_box_coverage 的注释）。
+
+    所以改成：
+      1. 框定「标注什么类别、在哪个位置」（信 world）
+      2. 在所有掩码里找「有多少比例落在这个框里」最高的那个（问seg）
+      3. 覆盖够高 -> 用框的类别 + 掩码的形状（两者长处都用上）
+      4. 覆盖不够 -> 退而求其次，用框的类别 + 掩码的外接框（不是正矩形，
+         而是掩码自己算出来的紧致形状，至少贴着物体）
+      5. 完全没有对应掩码 -> 才用真矩形兜底，并标记为待修正
     """
     from core import Object
 
@@ -407,52 +464,70 @@ def _prelabel_one(seg_model, world_model, img_path, class_names, conf, iou_thres
                     "h": r.orig_shape[0],
                 })
 
-    # --- 第 3 步：匹配合并 ---
-    objects = []
-    used_dets = set()
-
+    # --- 第 3 步：先把每个掩码转成多边形备用 ---
+    # （抽稀已修好：闭合环不再被压成矩形，1000 点圆的形状误差 0.04%）
     for m in masks:
-        poly = mask_to_polygon(m["mask"])
-        if not poly:
-            continue
+        m["poly"] = mask_to_polygon(m["mask"])
 
-        # 用掩码的外接框去和检测框匹配
-        from core import polygon_bbox
-        m_box = polygon_bbox(poly)
-        best_det, best_iou = None, 0.0
-        for j, d in enumerate(dets):
-            if j in used_dets:
+    from core import polygon_bbox
+
+    # --- 第 4 步：以框为锚，为每个框找最合适的掩码 ---
+    COVER_STRONG = 0.55   # 覆盖率够高，直接用掩码形状
+    COVER_WEAK = 0.25     # 覆盖率一般，用掩码的紧致外接框（仍非正矩形）
+    used_masks = set()
+    objects = []
+    n_strong = n_weak = n_rect = 0
+
+    for d in dets:
+        best_i = -1
+        best_cov = 0.0
+        for i, m in enumerate(masks):
+            if i in used_masks:
                 continue
-            v = iou(m_box, d["box_norm"])
-            if v > best_iou:
-                best_iou, best_det = v, (j, d)
+            cov = mask_box_coverage(m["mask"], d["box_norm"], d["w"], d["h"])
+            if cov > best_cov:
+                best_cov, best_i = cov, i
 
-        if best_det is not None and best_iou >= iou_thresh:
-            j, d = best_det
-            used_dets.add(j)
-            objects.append(Object(d["cls"], poly, source="model"))
-        else:
-            # 掩码没配上框：看看这个掩码的原始类别是否在十类里
-            seg_names = _seg_class_names(seg_model)
-            orig = seg_names.get(m["cls"], "") if seg_names else ""
-            if orig in class_names:
-                objects.append(Object(orig, poly, source="model"))
-            # 否则丢弃：既不知道类别，又没有框，不给用户添乱
+        if best_i >= 0 and best_cov >= COVER_STRONG:
+            used_masks.add(best_i)
+            poly = masks[best_i]["poly"]
+            if len(poly) >= 3:
+                objects.append(Object(d["cls"], poly, source="model"))
+                n_strong += 1
+                continue
 
-    # 没被用上的检测框：说明 YOLO-World 看到了但 seg 模型没分割出来
-    # （典型情况：小物体、遮挡物体）。给它们造一个矩形掩码，至少不漏标。
-    for j, d in enumerate(dets):
-        if j in used_dets:
+        # 覆盖不足：用该掩码自己的紧致外接框（贴着物体，不是正矩形）
+        if best_i >= 0 and best_cov >= COVER_WEAK and len(masks[best_i]["poly"]) >= 3:
+            mp = masks[best_i]["poly"]
+            bx1, by1, bx2, by2 = polygon_bbox(mp)
+            tight = [[bx1, by1], [bx2, by1], [bx2, by2], [bx1, by2]]
+            objects.append(Object(d["cls"], tight, source="model"))
+            n_weak += 1
             continue
+
+        # 真兜底：没有任何掩码能对应，保留矩形（宁可少也别漏标）
         x1, y1, x2, y2 = d["box_norm"]
-        w, h = d["w"], d["h"]
         poly = [
-            [x1 / w, y1 / h], [x2 / w, y1 / h],
-            [x2 / w, y2 / h], [x1 / w, y2 / h],
+            [x1 / d["w"], y1 / d["h"]], [x2 / d["w"], y1 / d["h"]],
+            [x2 / d["w"], y2 / d["h"]], [x1 / d["w"], y2 / d["h"]],
         ]
         objects.append(Object(d["cls"], poly, source="model"))
+        n_rect += 1
 
-    # --- 第 4 步：同类去重 ---
+    # --- 第 5 步：没被用上的掩码 ---
+    # 它描述的是一个框没看到的目标（例如 bed 不在十类里）。
+    # 若它的类别名恰好在十类内，就直接收进来，保留真实形状。
+    seg_names = _seg_class_names(seg_model)
+    n_extra = 0
+    for i, m in enumerate(masks):
+        if i in used_masks:
+            continue
+        orig = seg_names.get(m["cls"], "") if seg_names else ""
+        if orig in class_names and len(m["poly"]) >= 3:
+            objects.append(Object(orig, m["poly"], source="model"))
+            n_extra += 1
+
+    # --- 第 6 步：同类去重 ---
     # 【为什么必须做这一步】实测踩过的坑：
     # 草稿导出后拿 COCO 真值一比，精确率只有 0.376（多标 813 个、漏标仅 94 个）。
     # 查下来主因是「同一个物体被标了两次」：
@@ -470,6 +545,13 @@ def _prelabel_one(seg_model, world_model, img_path, class_names, conf, iou_thres
     # 做法：同类之间做一次 NMS，IoU 超过阈值就只保留面积大的那个。
     # 跨类不合并——「桌上的书和书旁边的杯子」本来就该是两个对象。
     objects = _dedup_same_class(objects, iou_thresh=0.55)
+
+    #来源分布记到对象上，便于界面和工具统计形状质量
+    for o in objects:
+        try:
+            o.shape_src = "mask" if len(o.polygon) > 8 else "box"
+        except Exception:  # noqa: BLE001
+            pass
 
     return objects
 

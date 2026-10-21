@@ -145,13 +145,29 @@ def simplify_polygon(polygon, max_points=180):
     实测导出里出现了 519 顶点的多边形，直接超标。
     Douglas-Peucker 是"在误差范围内简化曲线"，保证一定能收敛到指定点数。
 
-    误差 eps 取 0.002（归一化坐标下约等于 960px 图上的 2 像素），
-    这个量级的形状误差人眼分辨不出来，但顶点数能降一个数量级。
+    【踩过的坑：闭合环不能直接喂给开放折线的 D-P】
+    掩码轮廓是闭合环（首尾同点）。而 _dp 是按"开放折线"设计的：
+    它把首尾连成一条线段，然后看各点到这条线的距离。
+    闭合环首尾同点 -> 这条"线段"长度为零 -> 所有点到它的距离都很大
+    -> 每轮都判定"必须保留"并继续递归，行为完全退化。
+    实测 1000 点的圆被抽成9 点（近似正八边形），面积误差 9.9%。
+    正确做法（见JS 版 canvas/geom.js 的 simplifyClosed，思路一致）：
+    在"离起点最远的对角点"处把环切成两条开放链，分别 D-P，再拼回去。
+    对角点保证两段都不是退化的零长链。
+
+    误差 eps 不再写死 0.002，而是二分搜索「能让点数落到 max_points 以内的
+    最小 eps」—— 这样形状精度优先，点数只作为上限约束。
     """
     if len(polygon) <= max_points:
         return polygon
 
     pts = [(float(p[0]), float(p[1])) for p in polygon]
+
+    # 闭合环在 D-P 之前先去掉重复的尾点，否则会引入零长链。
+    if abs(pts[0][0] - pts[-1][0]) < 1e-12 and abs(pts[0][1] - pts[-1][1]) < 1e-12:
+        pts = pts[:-1]
+    if len(pts) <= max_points:
+        return [[p[0], p[1]] for p in pts]
 
     def _dp(points, eps):
         """对开放折线做 Douglas-Peucker 简化，返回保留点的索引列表。"""
@@ -179,21 +195,49 @@ def simplify_polygon(polygon, max_points=180):
             return left[:-1] + [idx] + [idx + i for i in right[1:]]
         return [0, n - 1]
 
-    # 二分搜索最小的 eps，使简化后点数 <= max_points
+    def _dp_closed(points, eps):
+        """闭合环的 D-P：在离首点最远的对角点处切成两半，分别抽稀再拼回。"""
+        n = len(points)
+        if n < 4:
+            return list(range(n))
+        x0, y0 = points[0]
+        # 找离首点最远的点作为切分点（对角点，保证两段都是非退化链）
+        cut, far = 0, -1.0
+        for i in range(1, n):
+            d = (points[i][0] - x0) ** 2 + (points[i][1] - y0) ** 2
+            if d > far:
+                far, cut = d, i
+        if cut == 0:
+            return list(range(n))
+        # A: points[0..cut]，B: points[cut..n-1]再绕回 points[0]
+        ka = _dp(points[:cut + 1], eps)
+        kb = _dp(points[cut:] + [points[0]], eps)
+        # 拼回：A 的全部 + B 的内部点（去掉两端，B 的两端已由 A 覆盖）
+        keep = list(ka) + [cut + i for i in kb[1:-1]]
+        # 去重并保持顺序
+        out, seen = [], set()
+        for i in keep:
+            if i not in seen and 0 <= i < n:
+                seen.add(i)
+                out.append(i)
+        out.sort()
+        return out
+
+    # 二分搜索最小的 eps，使简化后点数 <= max_points。
+    # 【注意】这里绝不能因为「点数已经够少」就 break——
+    #   那样二分只试了 mid=0.025 就退出，误差容差被放大到约 24 像素，
+    #   形状会被压成近似矩形。必须继续收敛去逼近更小的 eps。
     lo, hi = 0.0, 0.05
     best = pts
     for _ in range(18):
         mid = (lo + hi) / 2
-        keep = _dp(pts, mid)
+        keep = _dp_closed(pts, mid)
         cand = [pts[i] for i in keep]
         if len(cand) <= max_points:
             best = cand
             hi = mid
         else:
             lo = mid
-        if len(cand) <= max_points and len(cand) >= 3:
-            # 已经足够简了就不必再压 eps
-            break
 
     if len(best) < 3:
         return polygon[:max_points]
