@@ -708,7 +708,19 @@ async function startPrelabel() {
 
 async function startRelabel() {
   if (!S.images.length) { toast('没有图片', true); return; }
-  if (!confirm('将用自训权重 model/best.pt 对全部图片回标。\n已有的人工修正会被覆盖，确定继续？')) return;
+  // 回标会整体覆盖标注文件，人工修正会被清掉。
+  // 已经有修正记录时，提示要说清楚"记录已导出但标注会被重置"，
+  // 避免用户辛苦改了 60 条之后点错一下全没了。
+  const edited = S.images.reduce((s, i) => s + (i.edited || 0), 0);
+  let msg = '将用自训权重 model/best.pt 对全部图片回标。\n已有的人工修正会被覆盖，确定继续？';
+  if (edited > 0) {
+    msg = '⚠ 当前已有 ' + edited + ' 条人工修正。\n\n'
+        + '回标会重置全部标注文件，这些修正将被清除。\n'
+        + '（如果已导出 records/修正记录.csv，记录本身不会丢，'
+        + '但标注文件里的 edited 标记会没了）\n\n'
+        + '确定要继续吗？';
+  }
+  if (!confirm(msg)) return;
   $('progressWrap').classList.remove('hidden');
   try {
     const r = await api('/api/prelabel/start', {
