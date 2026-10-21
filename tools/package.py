@@ -34,7 +34,7 @@ CODE_FILES = [
     "requirements.txt", "README.md", "启动.bat", "ai_log.md", "提交信息.txt",
     ".gitignore",
     # 答辩材料：评委问答 + 代码讲解，都是自己写的，必须一起交
-    "答辩准备.md", "代码讲解.md",
+    "答辩准备.md", "代码讲解.md", "人工修正指引.md",
     # 数据溯源凭证：每张图对应哪个 COCO 原文件、覆盖各类多少张。
     # 任务书要求"逐张对应关系"，这份文件是唯一的依据，必须进包。
     "data/data_source.txt",
