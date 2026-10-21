@@ -82,6 +82,7 @@
   <main class="stage">
     <div class="canvas-wrap" id="canvasWrap">
       <canvas id="canvas"></canvas>
+      <div class="drawing-tip hidden" id="drawingTip"></div>
       <div class="empty-hint" id="emptyHint">
         <p>从左侧选择一张图片开始</p>
         <p class="muted">或先点击「预标注」批量生成草稿</p>
@@ -91,10 +92,17 @@
     <div class="toolbar">
       <div class="tool-group">
         <span class="tool-label">工具</span>
-        <button class="tool-btn active" data-tool="select">选择</button>
-        <button class="tool-btn" data-tool="polygon">多边形</button>
-        <button class="tool-btn" data-tool="brush">画笔</button>
-        <button class="tool-btn" data-tool="erase">橡皮</button>
+        <button class="tool-btn" data-tool="select" title="选择 / 移动对象：点击对象选中，选中后按 Delete 删除">选择</button>
+        <button class="tool-btn" data-tool="polygon" title="多边形描轮廓：逐个点击物体轮廓上的点，围完一圈后双击（或按 Enter）闭合；右键撤回上一个点">多边形</button>
+        <button class="tool-btn" data-tool="brush" title="画笔：先选中一个对象，再按住鼠标涂抹增/删它的轮廓">画笔</button>
+        <button class="tool-btn" data-tool="erase" title="橡皮：先选中一个对象，再涂抹削掉它的轮廓">橡皮</button>
+      </div>
+      <div class="tool-group" id="polyHint" hidden>
+        <span class="tool-hint">
+          逐点点击轮廓 → <b>双击</b>或 <b>Enter</b> 闭合 · <b>右键</b>撤回上一点
+        </span>
+        <button class="btn btn-ghost btn-xs" id="btnFinishPoly">完成描边</button>
+        <button class="btn btn-ghost btn-xs" id="btnCancelPoly2">放弃</button>
       </div>
       <div class="tool-group">
         <span class="tool-label">笔刷</span>

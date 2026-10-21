@@ -148,6 +148,7 @@ async function selectImage(name) {
   syncFocusBtn();
 
   $('emptyHint').classList.add('hidden');
+  syncPolyHint();
 
   const img = new Image();
   img.onload = () => {
@@ -460,7 +461,18 @@ function renderObjects() {
   $('objCount').textContent = total ? `${visibleObjects().length}/${total}` : '0';
   box.innerHTML = '';
   if (!total) {
-    box.innerHTML = '<p class="muted small" style="padding:8px">没有标注对象</p>';
+    // 【实测踩到的困惑】用户打开 000000.jpg（一张小熊照片），
+    // 右栏只写「没有标注对象」，他不知道是工具坏了还是自己操作错了，
+    // 于是去点「多边形」试图框小熊——但小熊不在任务书十类词表里。
+    // 这里明确说清原因：不是没标，而是这张图没有属于十类的目标。
+    const canAdd = S.classes.length > 0;
+    box.innerHTML = canAdd
+      ? `<p class="muted small" style="padding:8px;line-height:1.7">
+           没有标注对象。<br>
+           如果图里有属于任务书十类的目标（人、椅子、餐桌、沙发、电视、
+           笔记本、杯子、瓶子、盆栽、书），可以用底部
+           <b>「多边形」</b> 工具描出轮廓。</p>`
+      : '<p class="muted small" style="padding:8px">没有标注对象</p>';
     return;
   }
 
@@ -521,6 +533,36 @@ function renderObjects() {
 function syncFocusBtn() {
   const b = $('btnFocusOnly');
   if (b) b.classList.toggle('active', S.focusMode);
+}
+
+/**
+ * 多边形工具的状态提示。
+ *
+ * 【为什么要专门做这个】
+ * 用实测踩出来的坑：用户点了「多边形」按钮，在轮廓上点了一串点，
+ * 然后发现「框不了」—— 因为闭合要双击或按 Enter，
+ * 而界面上从头到尾没有任何地方告诉过他这件事。
+ * 新手会以为工具坏了，反复点击，最后放弃。
+ *
+ *所以做两件事：
+ *   1. 工具栏下方常驻一条提示（选中多边形工具就出现）
+ *   2. 画布上跟随一个指引层，随点数变化告诉用户下一步该干什么
+ */
+function syncPolyHint() {
+  const bar = $('polyHint');
+  const tip = $('drawingTip');
+  const on = S.tool === 'polygon';
+  if (bar) bar.hidden = !on;
+  if (!tip) return;
+  if (!on || !S.drawing) {
+    tip.classList.add('hidden');
+    return;
+  }
+  const n = S.draftPts.length;
+  tip.classList.remove('hidden');
+  tip.textContent = n < 3
+    ? `已点 ${n} 个点 · 继续沿物体轮廓点击（至少 3 点），然后双击或按 Enter 闭合`
+    : `已点 ${n} 个点 · 双击或按「完成描边」按钮闭合，右键撤回上一点`;
 }
 
 function renderProps() {
@@ -617,6 +659,7 @@ function bindEvents() {
       S.tool = b.dataset.tool;
       canvas.className = 'tool-' + S.tool;
       if (S.tool !== 'polygon') { S.drawing = false; S.draftPts = []; }
+      syncPolyHint();
       if (S.tool === 'brush' || S.tool === 'erase') {
         if (!S.selectedId) {
           toast('先用「选择」工具点一个对象，再来涂抹');
@@ -654,6 +697,22 @@ function bindEvents() {
     S.focusMode = !S.focusMode;
     syncFocusBtn();
     renderObjects(); draw();
+  };
+
+  // 多边形描边的显式操作按钮。
+  // 【为什么加这个】原来只能靠双击或 Enter 闭合，界面上一个提示都没有，
+  // 用户点了半天发现「框不了」，以为是工具坏了。
+  // 给出可见按钮 + 常驻提示条，把「怎么结束」明说出来。
+  $('btnFinishPoly').onclick = () => {
+    if (!S.drawing || S.draftPts.length < 3) {
+      toast('先在物体轮廓上点至少 3 个点', true);
+      return;
+    }
+    finishPolygon();
+  };
+  $('btnCancelPoly2').onclick = () => {
+    S.drawing = false; S.draftPts = [];
+    syncPolyHint(); draw();
   };
 
   // 画布交互
@@ -704,10 +763,11 @@ function onDown(e) {
 
   if (S.tool === 'polygon') {
     if (e.button === 2) {           // 右键：退回上一个点
-      S.draftPts.pop(); draw(); return;
+      S.draftPts.pop(); syncPolyHint(); draw(); return;
     }
     if (!S.drawing) { S.drawing = true; S.draftPts = []; }
     S.draftPts.push([nx, ny]);
+    syncPolyHint();
     draw();
     return;
   }
@@ -885,11 +945,16 @@ function buildBrushMask(o) {
 /** 闭合多边形：问用户类别，然后加入对象列表。 */
 function finishPolygon() {
   if (S.draftPts.length < 3) {
-    S.drawing = false; S.draftPts = []; draw();
+    // 【原来这里静默return，用户看不出为什么没反应】
+    // 少于 3 个点无法构成多边形，必须明确告知，否则像是工具坏了。
+    toast('至少需要 3 个点才能构成多边形，当前只有 '
+          + S.draftPts.length + ' 个', true);
+    S.drawing = false; S.draftPts = []; syncPolyHint(); draw();
     return;
   }
   const poly = S.draftPts.slice();
   S.drawing = false; S.draftPts = [];
+  syncPolyHint();
   showModal('新建标注对象', `
     <p class="muted small" style="margin-bottom:10px">选择这个对象的类别（共 ${poly.length} 个顶点）：</p>
     <div id="clsPick" style="display:grid;grid-template-columns:repeat(2,1fr);gap:6px">
@@ -1092,7 +1157,7 @@ function showModal(title, html) {
 document.addEventListener('keydown', e => {
   if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT') return;
   if (e.key === 'Delete' || e.key === 'Backspace') { deleteSelected(); }
-  if (e.key === 'Escape') { S.drawing = false; S.draftPts = []; draw(); }
+  if (e.key === 'Escape') { S.drawing = false; S.draftPts = []; syncPolyHint(); draw(); }
   if (e.key === 'Enter' && S.drawing) { finishPolygon(); }
 });
 

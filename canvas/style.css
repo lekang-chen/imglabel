@@ -194,6 +194,32 @@ body {
 .tool-group { display: flex; align-items: center; gap: 5px; }
 .tool-label { font-size: 11px; color: var(--text-3); margin-right: 3px; }
 
+/* 多边形描边时的常驻提示条。
+   原来只有双击/Enter 能闭合，界面零提示，新手会以为工具坏了。 */
+.tool-hint {
+  font-size: 11px; color: var(--text-2);
+  padding: 3px 9px; border-radius: var(--radius-sm);
+  background: var(--panel-2); border: 1px solid var(--line);
+}
+.tool-hint b { color: var(--accent); font-weight: 600; }
+
+.btn-xs {
+  height: 24px; padding: 0 9px; font-size: 11px; border-radius: var(--radius-sm);
+}
+
+/* 画布上的绘制指引层，显示当前点数与下一步动作 */
+.drawing-tip {
+  position: absolute; left: 50%; bottom: 14px; transform: translateX(-50%);
+  padding: 7px 14px; border-radius: var(--radius);
+  font-size: 12px; line-height: 1.5;
+  color: var(--text);
+  background: var(--panel);
+  border: 1px solid var(--line-2);
+  box-shadow: var(--shadow);
+  pointer-events: none; z-index: 5; max-width: 90%;
+  text-align: center;
+}
+
 .tool-btn {
   min-width: 26px; height: 24px; padding: 0 9px;
   border: 1px solid transparent; border-radius: var(--radius-sm);
