@@ -1,0 +1,33 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+
+# 训练产物（体积大，可重新生成）
+runs/
+*.log
+data/train.log
+
+# 原始数据与中间产物（不纳入版本库）
+data/coco/
+data/images/
+data/annotations/
+data/state.json
+*.zip
+
+# 预训练权重（从官方下载，不入库）
+weights/
+*.pt.tmp
+
+# 但自训权重必须提交，所以单独放行
+!model/best.pt
+
+# 编辑器 / 系统
+.vscode/
+.idea/
+Thumbs.db
+desktop.ini
+.DS_Store

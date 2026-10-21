@@ -1,0 +1,90 @@
+人机协同图像标注系统 - 提交信息
+================================================
+
+【基本信息】
+姓名：
+学号：
+院系 / 专业：
+联系方式：
+提交日期：2026-11-03
+
+【项目概述】
+一句话说明需求：
+  让标注人员在 30 分钟内完成 150 张室内场景图片的三模式标注
+  （目标检测 / 实例分割 / 语义分割）。
+
+核心设计：
+  以实例掩码为唯一核心标注对象。
+  检测框 = 掩码外接矩形自动生成；语义掩码 = 实例掩码按类别合并自动派生。
+  人工只修改掩码一次，三种格式自动同步。
+
+【数据来源与筛选说明】
+数据集名称：COCO 2017 val
+来源网址：https://cocodataset.org/
+镜像下载：https://hf-mirror.com/datasets/merve/coco
+下载数量：____ 张（COCO val2017 共 5000 张）
+保留数量：150 张
+
+筛选规则：
+  1. 只保留包含任务书规定十类之一的图片
+  2. 排除标注面积小于 100 像素² 的疑似误标
+  3. 优先选取稀有类别图片，保证每类不少于 15 张
+  4. 剩余名额按类别均衡补充，避免 person 类过度集中
+
+压缩规格：长边不超过 960 像素，JPG 质量 85
+
+覆盖类别统计（实际数量）：
+  person        ____ 张
+  chair         ____ 张
+  dining table  ____ 张
+  couch         ____ 张
+  tv            ____ 张
+  laptop        ____ 张
+  cup           ____ 张
+  bottle        ____ 张
+  potted plant  ____ 张
+  book          ____ 张
+
+逐张对应关系见 data/data_source.txt
+
+【迭代轮次】
+轮次 1（R1）：官方预训练权重
+  预标注模型：YOLO-World (yolov8s-world.pt) + YOLO26n-seg (yolo26n-seg.pt)
+  人工修正：____ 条
+  修正率：____ %
+  检测 mAP@0.5：____
+
+轮次 2（R2）：自训权重
+  基线权重：yolo26n-seg.pt（微调）
+  训练配置：epochs=____, batch=____, imgsz=____, 设备=____
+  人工修正：____ 条
+  修正率：____ %
+  检测 mAP@0.5：____
+
+对比结论：
+  自训模型相比官方预训练权重，mAP 由 ____ 提升至 ____，
+  修正率由 ____% 下降至 ____%，验证了「预标注→人工审核→训练→回标」
+  迭代闭环的有效性。
+
+【训练环境】
+GPU：NVIDIA GeForce RTX 5060 Laptop GPU (8GB)
+CPU：AMD Ryzen 9 8940HX
+内存：15.8 GB
+Python：3.10
+深度学习框架：ultralytics 8.x（PyTorch）
+
+【运行方式】
+  conda create -n imglabel python=3.10 -y
+  conda activate imglabel
+  pip install -r requirements.txt
+  python app.py
+（Windows 下亦可直接双击 启动.bat）
+
+【提交物清单】
+  源码：app.py / core.py / prelabel.py / exporter.py / train.py / canvas/ / tools/
+  dataset/    三格式数据集（YOLO txt / 实例掩码 / 语义 PNG）
+  model/      best.pt（自训权重）
+  records/    修正记录.csv + 对比结果.csv
+  demo/       演示录屏或关键截图
+  ai_log.md   AI 使用记录
+  README.md   运行说明

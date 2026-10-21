@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>人机协同图像标注系统</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+
+<header class="topbar">
+  <div class="brand">
+    <span class="logo"></span>
+    <span class="title">人机协同图像标注系统</span>
+  </div>
+
+  <div class="modes" id="modeTabs">
+    <button class="mode-btn active" data-mode="seg">
+      <span class="mode-name">实例分割</span>
+      <span class="mode-desc">掩码</span>
+    </button>
+    <button class="mode-btn" data-mode="det">
+      <span class="mode-name">目标检测</span>
+      <span class="mode-desc">矩形框</span>
+    </button>
+    <button class="mode-btn" data-mode="sem">
+      <span class="mode-name">语义分割</span>
+      <span class="mode-desc">按类合并</span>
+    </button>
+  </div>
+
+  <div class="status">
+    <div class="stat">
+      <span class="stat-label">已审核</span>
+      <span class="stat-value" id="statReviewed">0 / 0</span>
+    </div>
+    <div class="stat">
+      <span class="stat-label">修正</span>
+      <span class="stat-value accent" id="statEdited">0 / 60</span>
+    </div>
+    <div class="stat">
+      <span class="stat-label">修正率</span>
+      <span class="stat-value" id="statRate">—</span>
+    </div>
+  </div>
+</header>
+
+<div class="layout">
+
+  <!-- ============ 左侧：图片列表 ============ -->
+  <aside class="panel panel-left">
+    <div class="panel-head">
+      <span>图片列表</span>
+      <span class="muted mono" id="imgCount">0</span>
+    </div>
+
+    <div class="tool-row">
+      <button class="btn btn-primary" id="btnPrelabel">预标注</button>
+      <button class="btn" id="btnRelabel">回标</button>
+    </div>
+    <div class="tool-row">
+      <button class="btn" id="btnExport">导出数据集</button>
+      <button class="btn" id="btnTrain">训练</button>
+    </div>
+    <div class="tool-row">
+      <button class="btn btn-ghost" id="btnCompare">对比结果</button>
+      <button class="btn btn-ghost" id="btnRecords">修正记录</button>
+    </div>
+
+    <div class="progress-wrap hidden" id="progressWrap">
+      <div class="progress-bar"><div class="progress-fill" id="progressFill"></div></div>
+      <div class="progress-text mono" id="progressText">准备中…</div>
+    </div>
+
+    <div class="list-head">
+      <span>文件</span><span>状态</span>
+    </div>
+    <div class="img-list" id="imgList"></div>
+  </aside>
+
+  <!-- ============ 中间：画布 ============ -->
+  <main class="stage">
+    <div class="canvas-wrap" id="canvasWrap">
+      <canvas id="canvas"></canvas>
+      <div class="empty-hint" id="emptyHint">
+        <p>从左侧选择一张图片开始</p>
+        <p class="muted">或先点击「预标注」批量生成草稿</p>
+      </div>
+    </div>
+
+    <div class="toolbar">
+      <div class="tool-group">
+        <span class="tool-label">工具</span>
+        <button class="tool-btn active" data-tool="select">选择</button>
+        <button class="tool-btn" data-tool="polygon">多边形</button>
+        <button class="tool-btn" data-tool="brush">画笔</button>
+        <button class="tool-btn" data-tool="erase">橡皮</button>
+      </div>
+      <div class="tool-group">
+        <span class="tool-label">笔刷</span>
+        <input type="range" id="brushSize" min="4" max="60" value="18">
+        <span class="mono muted" id="brushSizeVal">18</span>
+      </div>
+      <div class="tool-group">
+        <span class="tool-label">视图</span>
+        <button class="tool-btn" id="btnZoomOut">－</button>
+        <span class="mono" id="zoomLabel">100%</span>
+        <button class="tool-btn" id="btnZoomIn">＋</button>
+        <button class="tool-btn" id="btnFit">适配</button>
+      </div>
+      <div class="tool-group">
+        <span class="tool-label">显示</span>
+        <label class="chk"><input type="checkbox" id="showMask" checked> 掩码</label>
+        <label class="chk"><input type="checkbox" id="showBox"> 框</label>
+        <label class="chk"><input type="checkbox" id="showLabel" checked> 标签</label>
+      </div>
+    </div>
+  </main>
+
+  <!-- ============ 右侧：属性 + 修正记录 ============ -->
+  <aside class="panel panel-right">
+    <div class="panel-head">
+      <span>标注对象</span>
+      <span class="muted mono" id="objCount">0</span>
+    </div>
+
+    <div class="obj-list" id="objList"></div>
+
+    <div class="panel-head sub">
+      <span>选中对象</span>
+    </div>
+    <div class="props" id="props">
+      <p class="muted small">在画布或上方列表中选择一个对象</p>
+    </div>
+
+    <div class="panel-head sub">
+      <span>本图修正记录</span>
+      <span class="muted mono" id="editCount">0</span>
+    </div>
+    <div class="edit-log" id="editLog">
+      <p class="muted small">还没有修正</p>
+    </div>
+  </aside>
+</div>
+
+<!-- ============ 弹层 ============ -->
+<div class="modal hidden" id="modal">
+  <div class="modal-box">
+    <div class="modal-head">
+      <span id="modalTitle">标题</span>
+      <button class="modal-close" id="modalClose">×</button>
+    </div>
+    <div class="modal-body" id="modalBody"></div>
+  </div>
+</div>
+
+<div class="toast hidden" id="toast"></div>
+
+<script src="/static/app.js"></script>
+</body>
+</html>

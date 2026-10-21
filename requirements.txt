@@ -1,0 +1,20 @@
+# 人机协同图像标注系统 - 依赖清单
+#
+# 安装：
+#   pip install -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
+#
+# 核心三件套（任务书指定）：
+ultralytics>=8.3.0     # 目标检测 / 实例分割 / YOLO-World 开放词表
+flask>=3.0.0            # Web 服务
+psutil>=5.9.0           # 进程与硬件信息（显存/CPU 探测）
+
+# 掩码处理与几何计算
+opencv-python>=4.8.0    # 掩码 <-> 多边形转换（findContours / fillPoly）
+numpy>=1.24.0
+pillow>=10.0.0          # 图片读写与压缩
+
+# YOLO-World 开放词表必需的 CLIP 文本编码器
+clip-anytorch>=2.5.0
+
+# setuptools<81：clip 模块仍在 import pkg_resources，新版已移除
+setuptools<81
