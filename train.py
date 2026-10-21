@@ -106,6 +106,9 @@ def _rewrite_data_yaml_path():
     - 训练前重写一次，等于让数据集配置"跟着机器走"。
 
     只改 path 这一行，nc / names / train / val 保持导出时的样子不动。
+
+    注意：改写后必须调用 restore_data_yaml_path() 还原成相对路径，
+    否则这份被污染的 data.yaml 会跟着进提交包，评委换机器就训不了。
     """
     try:
         with open(DATA_YAML, encoding="utf-8") as f:
@@ -123,6 +126,38 @@ def _rewrite_data_yaml_path():
             out.append(ln)
     if not replaced:
         out.insert(0, "path: %s" % new_path)
+
+    with open(DATA_YAML, "w", encoding="utf-8") as f:
+        f.write("\n".join(out) + "\n")
+
+
+def restore_data_yaml_path():
+    """
+    把 data.yaml 的 path 还原成相对路径 "."。
+
+    为什么需要：
+    训练时为了让 ultralytics 找到数据，会把 path 改写成绝对路径。
+    但提交包里的 data.yaml 必须是可移植的——评委解压到任何目录都能用。
+    所以训练结束后立刻还原，避免污染提交物。
+
+    相对路径 "." 的含义是"以 data.yaml 所在目录为根"，
+    配合 train: images/train 这种相对写法，整个数据集目录可以整体搬走。
+    """
+    try:
+        with open(DATA_YAML, encoding="utf-8") as f:
+            lines = f.read().splitlines()
+    except OSError:
+        return
+
+    out, replaced = [], False
+    for ln in lines:
+        if ln.strip().startswith("path:"):
+            out.append("path: .")
+            replaced = True
+        else:
+            out.append(ln)
+    if not replaced:
+        out.insert(0, "path: .")
 
     with open(DATA_YAML, "w", encoding="utf-8") as f:
         f.write("\n".join(out) + "\n")
@@ -295,6 +330,8 @@ def main():
         )
     except Exception as exc:  # noqa: BLE001
         print("[错误] 训练失败: %s" % exc)
+        # 失败了也要还原 data.yaml，否则提交包里的配置是本机绝对路径
+        restore_data_yaml_path()
         sys.exit(1)
 
     # --- 第四步：把最佳权重拷到 model/ ---
@@ -316,6 +353,12 @@ def main():
     elapsed = time.time() - t0
     print("[4/4] 训练完成，耗时 %.1f 分钟" % (elapsed / 60))
     print("        最佳权重已保存: %s" % dst)
+
+    # 还原 data.yaml 的 path 为相对路径。
+    # 训练时改成绝对路径是为了让 ultralytics 找到数据，
+    # 但提交包里的 data.yaml 必须可移植——评委解压到任何目录都能直接训练。
+    restore_data_yaml_path()
+    print("        data.yaml 已还原为相对路径（保证提交包可移植）")
 
     # 训练摘要写进 state，供对比页读取
     state_path = os.path.join(BASE_DIR, "data", "state.json")

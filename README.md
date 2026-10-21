@@ -5,13 +5,14 @@
 ## 快速开始
 
 ```bash
-# 1. 创建环境
-conda create -n imglabel python=3.10 -y
-conda activate imglabel
+# 1. 创建环境（Windows，Python 3.10+）
+python -m venv .venv
+.venv\Scripts\activate
 pip install -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
 
 # 2. 放入图片
 #    把 150 张室内场景图片（JPG，长边 ≤960）放到 data/images/
+#    （仓库已附带 data/data_source.txt，可用 tools/prepare_data.py 重新生成）
 
 # 3. 启动
 python app.py
@@ -50,7 +51,14 @@ python app.py
 ├─ tools/
 │  ├─ prepare_data.py  从 COCO 筛选压缩出符合要求的数据集
 │  ├─ fast_download.py 多线程分片下载器
-│  └─ test_core.py     核心逻辑自测（49 项）
+│  ├─ test_core.py     核心逻辑自测（56 项）
+│  ├─ eval_draft.py    草稿质量评估（对照 COCO 真值算 P/R/F1）
+│  ├─ relabel_r2.py    用 best.pt 回标到独立目录（不覆盖 R1 草稿）
+│  ├─ compare_rounds.py R1/R2 修正率逐类对比
+│  ├─ make_compare_csv.py 生成 records/对比结果.csv
+│  ├─ shoot_demo.py    抓 demo 截图（Edge headless）
+│  ├─ exp_lr.py        学习率对照实验
+│  └─ package.py       打包提交件（含 .git 提交历史）
 ├─ data/images/        原始图片
 ├─ data/annotations/   标注 JSON
 ├─ dataset/            导出的三格式数据集
@@ -65,13 +73,47 @@ python app.py
 python tools/test_core.py
 ```
 
-覆盖几何工具、掩码转多边形、三格式一致性、导出自检、边界情况。
+56 项，覆盖几何工具、掩码转多边形、三格式一致性、导出自检、边界情况、
+PNG 存盘往返一致性（防调色板模式回归）。
+
+## 质量评估与迭代对比
+
+```bash
+# 1. 评估当前草稿质量（对照 COCO 官方真值）
+python tools/eval_draft.py
+
+# 2. 用自训权重回标到 data/annotations_r2（不覆盖 R1 草稿）
+python tools/relabel_r2.py
+
+# 3. 对比 R1 / R2 的修正率
+python tools/compare_rounds.py
+
+# 4. 生成 records/对比结果.csv
+python tools/make_compare_csv.py
+```
+
+### 实测结果
+
+| 指标 | R1 官方权重 | R2 自训权重 | 变化 |
+|---|---|---|---|
+| 草稿对象数 | 900 | 627 | −273 |
+| 需人工修正数 | 529 | 320 | −209 |
+| **修正率** | **58.8%** | **51.0%** | **↓ 7.7 个百分点** |
+| 精确率 | 0.412 | 0.490 | +0.077 |
+| 召回率 | 0.600 | 0.497 | −0.103 |
+| 检测 mAP@0.5 | — | **0.741** | — |
+| 掩码 mAP@0.5 | — | **0.474** | — |
+
+> 召回率下降不是模型变差：R1 是两个模型配合、倾向多标（精确率仅 0.412），
+> R2 是单一自训模型、只标有把握的。**要人改的对象从 529 降到 320**，
+> 这才是闭环的价值。详见 `ai_log.md`。
 
 ## 环境要求
 
 - Python 3.10+，Windows 10 x64 / macOS / Linux
 - 最低配置：8GB 内存、20GB 可用磁盘（纯 CPU 可训练，仅耗时较长）
-- 推荐：8GB 显存以上 NVIDIA 显卡，训练约 15~25 分钟
+- 推荐：8GB 显存以上 NVIDIA 显卡（本项目实测 RTX 5060 Laptop 8.5GB，
+  训练 51 轮耗时 3.1 分钟）
 - 依赖：ultralytics、flask、psutil、opencv-python、numpy、pillow、clip-anytorch
 
 ## 类别词表
@@ -82,13 +124,20 @@ python tools/test_core.py
 
 ## 数据准备
 
+推荐方式（**不下载 815MB 整包**，实测 59 秒完成 150 张）：
+
 ```bash
-# 下载 COCO val2017
-python tools/fast_download.py http://images.cocodataset.org/zips/val2017.zip data/coco/val2017.zip --threads 12
-# 标注文件
+# 1. 只取标注文件
 curl -L -o data/coco/instances_val2017.json https://hf-mirror.com/datasets/merve/coco/resolve/main/annotations/instances_val2017.json
 
-# 筛选 + 压缩（长边 ≤960，JPG 质量 85）
+# 2. 按类别均衡策略选出 150 张，从官方直链逐张抓取 + 压缩
+python tools/prepare_data.py --fetch-url --coco-ann data/coco/instances_val2017.json --out data/images
+```
+
+传统方式（下载整包，慢）：
+
+```bash
+python tools/fast_download.py http://images.cocodataset.org/zips/val2017.zip data/coco/val2017.zip --threads 12
 python tools/prepare_data.py --coco-ann data/coco/instances_val2017.json --coco-img data/coco/val2017 --out data/images
 ```
 

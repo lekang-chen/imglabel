@@ -35,6 +35,9 @@ CODE_FILES = [
     ".gitignore",
     # 答辩材料：评委问答 + 代码讲解，都是自己写的，必须一起交
     "答辩准备.md", "代码讲解.md",
+    # 数据溯源凭证：每张图对应哪个 COCO 原文件、覆盖各类多少张。
+    # 任务书要求"逐张对应关系"，这份文件是唯一的依据，必须进包。
+    "data/data_source.txt",
 ]
 CODE_DIRS = ["canvas", "tools"]
 
@@ -127,6 +130,25 @@ def check_required(dst_root):
     demo = os.path.join(dst_root, "demo")
     if not os.path.isdir(demo) or not os.listdir(demo):
         problems.append("demo/ 为空（需要录屏 ≤3 分钟或 3 张关键截图）")
+
+    # 数据溯源凭证：逐张对应关系
+    src = os.path.join(dst_root, "data", "data_source.txt")
+    if not os.path.exists(src):
+        problems.append("缺少 data/data_source.txt（数据逐张对应关系）")
+
+    # data.yaml 的 path 必须是相对路径，否则评委换机器就训不了
+    # （train.py 训练时会临时改写成绝对路径，训练完必须还原）
+    yaml_path = os.path.join(dst_root, "dataset", "data.yaml")
+    if os.path.exists(yaml_path):
+        with open(yaml_path, encoding="utf-8") as f:
+            for ln in f:
+                if ln.strip().startswith("path:"):
+                    val = ln.split(":", 1)[1].strip()
+                    if val not in (".", "./"):
+                        problems.append(
+                            "dataset/data.yaml 的 path 是绝对路径 (%s)，"
+                            "提交包必须用相对路径才能换机器训练" % val)
+                    break
 
     return problems
 

@@ -1,5 +1,5 @@
 # 由 exporter.py 自动生成，请勿手工修改
-path: D:/imglabel/dataset
+path: .
 train: images/train
 val: images/val
 nc: 10
