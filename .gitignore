@@ -43,3 +43,6 @@ data/round_compare.json
 
 # ultralytics 生成的标签缓存（可重新生成）
 dataset/labels/*.cache
+
+# 截图调试用的第二个 profile
+.edge_tmp*/
