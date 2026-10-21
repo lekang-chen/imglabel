@@ -50,3 +50,8 @@ demo_script.js
 
 # UI 测试临时 harness（由 tools/ui_test.js 自动生成和清理）
 canvas/_ui_harness.html
+
+# 临时备份（体积大，可由tools/rerun_r1.py 重新生成）
+data/annotations_before_shape_fix/
+data/annotations_*/
+data/train.log

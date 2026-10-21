@@ -27,18 +27,55 @@ OUT_CSV = os.path.join(RECORD_DIR, "对比结果.csv")
 
 
 def read_best_map():
-    """从训练结果里取最佳 mAP@0.5（检测 / 掩码）。"""
-    if not os.path.exists(RESULTS_CSV):
-        return None, None
-    import csv as _csv
-    with open(RESULTS_CSV, "r", encoding="utf-8") as f:
-        rows = list(_csv.DictReader(f))
-    if not rows:
-        return None, None
-    best_box = max(rows, key=lambda r: float(r["metrics/mAP50(B)"]))
-    best_mask = max(rows, key=lambda r: float(r["metrics/mAP50(M)"]))
-    return (float(best_box["metrics/mAP50(B)"]),
-            float(best_mask["metrics/mAP50(M)"]))
+    """取mAP@0.5（检测 / 掩码）。
+
+    【口径问题，必须说清楚】
+    results.csv 里每个 epoch 都记了当时的验证 mAP。
+    - 用 max() 取全表最大值 = 训练过程中的「最好看的那一版」
+    - 用最后一个epoch = early stopping 停下来的那一版
+    两者都不是「实际回标时用的那个模型」。
+
+    真正对外该报的是best.pt 在验证集上的最终表现，
+    也就是 train.py 训练结束时那段 "Validating best.pt" 打印的 all 行。
+    训练日志落在 data/train.log，取不到时退回用 results.csv 最后一轮，
+    并在返回值里带一个来源标记，由调用方写进 CSV 说明列。
+    """
+    box_map = mask_map = None
+    source = "未获取"
+
+    # 优先从训练日志里解析 best.pt 的验证结果
+    log_path = os.path.join(BASE_DIR, "data", "train.log")
+    if os.path.exists(log_path):
+        try:
+            import re
+            with open(log_path, "r", encoding="utf-8", errors="ignore") as f:
+                txt = f.read()
+            # 匹配 "all  30  200  0.808  0.639  0.742  0.545  0.549 ..."
+            m = re.findall(
+                r"^\s*all\s+(\d+)\s+(\d+)\s+([\d.]+)\s+([\d.]+)\s+"
+                r"([\d.]+)\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)",
+                txt, re.M)
+            if m:
+                last = m[-1]
+                box_map = float(last[4])
+                mask_map = float(last[8])
+                source = "best.pt 验证集实测（回标实际使用的权重）"
+        except Exception:  # noqa: BLE001
+            pass
+
+    if box_map is None and os.path.exists(RESULTS_CSV):
+        import csv as _csv
+        with open(RESULTS_CSV, "r", encoding="utf-8") as f:
+            rows = list(_csv.DictReader(f))
+        if rows:
+            # 退回用最后一个 epoch，而不是 max()——
+            # max() 是训练过程的峰值，不代表最终权重的真实水平，报出去会偏高。
+            last = rows[-1]
+            box_map = float(last["metrics/mAP50(B)"])
+            mask_map = float(last["metrics/mAP50(M)"])
+            source = "results.csv 最后一个 epoch（未找到验证日志）"
+
+    return box_map, mask_map, source
 
 
 def main():
@@ -51,7 +88,7 @@ def main():
         d = json.load(f)
     r1, r2 = d["r1"], d["r2"]
 
-    box_map, mask_map = read_best_map()
+    box_map, mask_map, map_source = read_best_map()
 
     os.makedirs(RECORD_DIR, exist_ok=True)
     with open(OUT_CSV, "w", encoding="utf-8-sig", newline="") as f:

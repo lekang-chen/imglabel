@@ -1,4 +1,2 @@
-1 couch
-2 dining table
-3 chair
-4 chair
+1 dining table
+2 chair
