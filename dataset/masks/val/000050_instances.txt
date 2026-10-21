@@ -1,19 +1,15 @@
-1 person
+1 dining table
 2 person
-3 cup
-4 cup
-5 bottle
-6 person
+3 person
+4 dining table
+5 person
+6 cup
 7 person
 8 cup
-9 bottle
-10 person
+9 person
+10 bottle
 11 cup
-12 dining table
-13 person
-14 bottle
-15 cup
-16 bottle
-17 cup
-18 cup
-19 person
+12 cup
+13 bottle
+14 cup
+15 bottle

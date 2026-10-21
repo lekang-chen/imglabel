@@ -1,6 +1,4 @@
-1 person
-2 couch
+1 couch
+2 person
 3 person
-4 person
-5 couch
-6 book
+4 book

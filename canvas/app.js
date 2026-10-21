@@ -68,8 +68,28 @@ async function init() {
   S.colorMap = {};
   S.classes.forEach(c => { S.colorMap[c.name] = c.color; });
 
+  // 支持用 URL 参数直接进入指定模式和指定图片：
+  //   ?mode=det&img=000003.jpg
+  // 用途有两个：
+  //   1) 演示/截图脚本可以直达某个状态，不用模拟点击
+  //   2) 答辩时想让评委直接看某张图，可以把链接发过去
+  const params = new URLSearchParams(location.search);
+  const qMode = params.get('mode');
+  if (qMode && ['seg', 'det', 'sem'].includes(qMode)) {
+    S.mode = qMode;
+    document.querySelectorAll('.mode-btn').forEach(x => {
+      x.classList.toggle('active', x.dataset.mode === qMode);
+    });
+  }
+  const qImg = params.get('img');
+  if (qImg) S.pendingImage = qImg;
+
   await loadImages();
   bindEvents();
+  if (S.pendingImage) {
+    const it = S.images.find(i => i.name === S.pendingImage);
+    if (it) await selectImage(it.name);
+  }
   draw();
 }
 

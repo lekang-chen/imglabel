@@ -1,13 +1,13 @@
-1 dining table
+1 couch
 2 chair
-3 chair
+3 dining table
 4 chair
-5 dining table
-6 chair
+5 person
+6 dining table
 7 chair
 8 dining table
 9 chair
-10 bottle
+10 chair
 11 chair
-12 person
-13 couch
+12 chair
+13 bottle

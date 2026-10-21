@@ -28,8 +28,3 @@
 28 person
 29 person
 30 person
-31 person
-32 person
-33 person
-34 person
-35 person

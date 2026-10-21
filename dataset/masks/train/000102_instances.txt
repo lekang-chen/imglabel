@@ -1,23 +1,17 @@
 1 couch
 2 couch
-3 book
-4 book
-5 potted plant
-6 book
-7 book
-8 couch
-9 couch
-10 cup
-11 dining table
+3 dining table
+4 dining table
+5 chair
+6 potted plant
+7 potted plant
+8 chair
+9 potted plant
+10 bottle
+11 book
 12 book
-13 potted plant
+13 book
 14 book
-15 bottle
+15 cup
 16 book
-17 dining table
-18 cup
-19 potted plant
-20 chair
-21 chair
-22 potted plant
-23 book
+17 book

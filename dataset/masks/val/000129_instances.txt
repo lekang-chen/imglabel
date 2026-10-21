@@ -1,5 +1,4 @@
-1 potted plant
-2 person
-3 person
-4 potted plant
-5 potted plant
+1 person
+2 potted plant
+3 potted plant
+4 person

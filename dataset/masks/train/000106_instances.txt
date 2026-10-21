@@ -1,21 +1,13 @@
-1 laptop
-2 cup
-3 tv
-4 cup
-5 book
-6 bottle
+1 dining table
+2 tv
+3 laptop
+4 tv
+5 tv
+6 book
 7 person
-8 laptop
-9 cup
+8 cup
+9 bottle
 10 cup
-11 tv
-12 cup
-13 tv
-14 book
-15 bottle
-16 dining table
-17 bottle
-18 bottle
-19 person
-20 tv
-21 bottle
+11 cup
+12 bottle
+13 bottle

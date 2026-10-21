@@ -1,6 +1,5 @@
-1 potted plant
-2 potted plant
-3 bottle
-4 person
+1 person
+2 bottle
+3 potted plant
+4 potted plant
 5 book
-6 potted plant

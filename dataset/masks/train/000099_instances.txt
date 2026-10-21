@@ -1,10 +1,7 @@
 1 couch
-2 chair
+2 dining table
 3 couch
-4 couch
+4 chair
 5 couch
 6 book
 7 cup
-8 dining table
-9 chair
-10 couch

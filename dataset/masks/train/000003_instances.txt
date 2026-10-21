@@ -1,7 +1,5 @@
-1 person
+1 couch
 2 tv
-3 tv
+3 person
 4 person
-5 person
-6 cup
-7 couch
+5 cup

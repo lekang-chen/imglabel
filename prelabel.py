@@ -452,7 +452,64 @@ def _prelabel_one(seg_model, world_model, img_path, class_names, conf, iou_thres
         ]
         objects.append(Object(d["cls"], poly, source="model"))
 
+    # --- 第 4 步：同类去重 ---
+    # 【为什么必须做这一步】实测踩过的坑：
+    # 草稿导出后拿 COCO 真值一比，精确率只有 0.376（多标 813 个、漏标仅 94 个）。
+    # 查下来主因是「同一个物体被标了两次」：
+    #   1) YOLO-World 经常对同一个物体吐出好几个高度重叠的框；
+    #   2) 我们的匹配逻辑里，一个掩码配走一个框后，
+    #      那个框的「双胞胎兄弟框」因为 IoU 仍然达标，会在
+    #      「未配上的检测框」兜底分支里又被当成一个新对象加进来。
+    # 结果就是同一张图里出现两个几乎完全重合的同类对象。
+    # 一张图 1302 个对象里，有 404 对同类 IoU>0.6 的重复对。
+    #
+    # 这些重复标注会：
+    #   - 拉低训练标签的精确率，把模型教坏（实测微调后 mAP 反而下降）
+    #   - 虚增修正率的分母，让修正率这个指标失真
+    #
+    # 做法：同类之间做一次 NMS，IoU 超过阈值就只保留面积大的那个。
+    # 跨类不合并——「桌上的书和书旁边的杯子」本来就该是两个对象。
+    objects = _dedup_same_class(objects, iou_thresh=0.55)
+
     return objects
+
+
+def _dedup_same_class(objects, iou_thresh=0.55):
+    """
+    同类对象去重：同类之间 IoU 超过阈值时，只保留面积最大的那个。
+
+    保留面积大的而不是保留置信度高的，是因为这里的对象来自掩码，
+    掩码面积大通常意味着这个物体更完整、更接近真实边界。
+
+    跨类不合并：一张桌子和桌上的书即使重叠，也必须都保留。
+    """
+    from core import polygon_bbox, polygon_area
+
+    # 按面积从大到小排，这样保留的天然是"最完整"的那个
+    items = []
+    for o in objects:
+        try:
+            area = polygon_area(o.polygon)
+        except Exception:  # noqa: BLE001
+            area = 0.0
+        items.append((area, o))
+
+    items.sort(key=lambda t: -t[0])
+
+    kept = []
+    for area, o in items:
+        box = polygon_bbox(o.polygon)
+        is_dup = False
+        for _ka, k in kept:
+            if k.class_name != o.class_name:
+                continue
+            if iou(box, polygon_bbox(k.polygon)) > iou_thresh:
+                is_dup = True
+                break
+        if not is_dup:
+            kept.append((area, o))
+
+    return [o for _a, o in kept]
 
 
 _SEG_NAMES_CACHE = {}
@@ -508,6 +565,9 @@ def run_relabel_job(job, image_dir, weights_path, conf=0.25, round_tag="R2"):
                         cls_name = seg_names.get(cls_id, "")
                         if cls_name in CLASSES:
                             objs.append(Object(cls_name, poly, source="model"))
+            # 同类去重：自训模型同样会对同一个物体吐出多个重叠掩码，
+            # 不去重的话 R2 反而比 R1 重复更多，修正率就降不下来。
+            objs = _dedup_same_class(objs, iou_thresh=0.55)
             results[img_name] = {"objects": [o.to_dict() for o in objs],
                                  "source": "model", "round": round_tag}
         except Exception as exc:  # noqa: BLE001

@@ -1,2 +1,2 @@
-1 chair
-2 cup
+1 cup
+2 chair

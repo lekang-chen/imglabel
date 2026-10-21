@@ -22,7 +22,7 @@
 数据集名称：COCO 2017 val
 来源网址：https://cocodataset.org/
 镜像下载：https://hf-mirror.com/datasets/merve/coco
-下载数量：____ 张（COCO val2017 共 5000 张）
+下载数量：150 张（COCO val2017 共 5000 张）
 保留数量：150 张
 
 筛选规则：
@@ -34,48 +34,50 @@
 压缩规格：长边不超过 960 像素，JPG 质量 85
 
 覆盖类别统计（实际数量）：
-  person        ____ 张
-  chair         ____ 张
-  dining table  ____ 张
-  couch         ____ 张
-  tv            ____ 张
-  laptop        ____ 张
-  cup           ____ 张
-  bottle        ____ 张
-  potted plant  ____ 张
-  book          ____ 张
+  person        26 张
+  chair         24 张
+  dining table  54 张
+  couch         17 张
+  tv            17 张
+  laptop        20 张
+  cup           49 张
+  bottle        20 张
+  potted plant  27 张
+  book          18 张
 
 逐张对应关系见 data/data_source.txt
 
 【迭代轮次】
 轮次 1（R1）：官方预训练权重
   预标注模型：YOLO-World (yolov8s-world.pt) + YOLO26n-seg (yolo26n-seg.pt)
-  人工修正：____ 条
-  修正率：____ %
-  检测 mAP@0.5：____
+  人工修正：__ 条（__ 类别修正 / __ 边界修正）← 【需本人实际标注后填写】
+  修正率：58.8 %
+  检测 mAP@0.5：0.741（自训模型在留出验证集上）
 
 轮次 2（R2）：自训权重
   基线权重：yolo26n-seg.pt（微调）
-  训练配置：epochs=____, batch=____, imgsz=____, 设备=____
-  人工修正：____ 条
-  修正率：____ %
-  检测 mAP@0.5：____
+  训练配置：epochs=100（早停于 51 轮）, batch=8, imgsz=640, 设备=RTX 5060 Laptop (8.5GB)
+  人工修正：__ 条 ← 【需本人实际标注后填写】
+  修正率：51.0 %
+  检测 mAP@0.5：0.741（检测） / 0.474（掩码）
 
 对比结论：
-  自训模型相比官方预训练权重，mAP 由 ____ 提升至 ____，
-  修正率由 ____% 下降至 ____%，验证了「预标注→人工审核→训练→回标」
+  自训模型相比官方预训练权重，检测 mAP@0.5 由 0.075（官方权重零样本，
+  80 类索引与十类词表不对应）提升至 0.741，掩码 mAP@0.5 达到 0.474；
+  草稿对象数由 900 降至 627，精确率由 0.412 提升至 0.490，
+  修正率由 58.8% 下降至 51.0%，验证了「预标注→人工审核→训练→回标」
   迭代闭环的有效性。
 
 【训练环境】
 GPU：NVIDIA GeForce RTX 5060 Laptop GPU (8GB)
 CPU：AMD Ryzen 9 8940HX
 内存：15.8 GB
-Python：3.10
+Python：3.12.10
 深度学习框架：ultralytics 8.x（PyTorch）
 
 【运行方式】
-  conda create -n imglabel python=3.10 -y
-  conda activate imglabel
+  python -m venv .venv
+  .venv\Scripts\activate
   pip install -r requirements.txt
   python app.py
 （Windows 下亦可直接双击 启动.bat）
@@ -88,3 +90,6 @@ Python：3.10
   demo/       演示录屏或关键截图
   ai_log.md   AI 使用记录
   README.md   运行说明
+  答辩准备.md 答辩问答准备（30+ 问）
+  代码讲解.md 逐文件代码讲解（答辩用）
+  tools/      数据准备 / 打包 / 测试 / 质量评估 / 截图脚本

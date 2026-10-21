@@ -1,7 +1,5 @@
-1 person
-2 bottle
+1 couch
+2 person
 3 bottle
-4 person
-5 bottle
-6 couch
-7 book
+4 bottle
+5 book

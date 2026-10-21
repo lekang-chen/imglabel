@@ -1,27 +1,17 @@
 1 chair
-2 potted plant
+2 couch
 3 chair
-4 couch
-5 tv
+4 chair
+5 chair
 6 chair
-7 potted plant
-8 chair
-9 chair
-10 chair
-11 book
-12 chair
-13 tv
-14 couch
-15 chair
-16 chair
-17 chair
-18 chair
-19 potted plant
-20 potted plant
-21 chair
-22 bottle
-23 potted plant
-24 dining table
-25 bottle
-26 bottle
-27 cup
+7 chair
+8 dining table
+9 potted plant
+10 tv
+11 potted plant
+12 book
+13 potted plant
+14 cup
+15 bottle
+16 bottle
+17 bottle

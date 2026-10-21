@@ -1,22 +1,15 @@
-1 person
-2 chair
-3 cup
+1 dining table
+2 person
+3 person
 4 dining table
-5 dining table
+5 chair
 6 chair
 7 chair
-8 person
+8 chair
 9 dining table
 10 cup
-11 person
-12 chair
+11 chair
+12 cup
 13 dining table
-14 bottle
-15 dining table
-16 chair
-17 cup
-18 chair
-19 cup
-20 chair
-21 cup
-22 chair
+14 cup
+15 bottle

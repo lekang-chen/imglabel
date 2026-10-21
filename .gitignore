@@ -31,3 +31,12 @@ weights/
 Thumbs.db
 desktop.ini
 .DS_Store
+
+# 截图用的浏览器临时 profile
+.edge_tmp/
+
+# 评估中间产物（可由 tools/ 脚本重新生成）
+data/annotations_r1_backup/
+data/annotations_r2/
+data/draft_quality.json
+data/round_compare.json

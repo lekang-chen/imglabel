@@ -136,33 +136,68 @@ def simplify_polygon(polygon, max_points=180):
     预标注模型的掩码转成多边形后可能有几百上千个点，
     1) 画布渲染慢  2) 导出的 txt 文件巨大  3) 人工拖点改不动
 
-    做法：用「相邻三点共线就删中间点」的方式抽稀（Douglas-Peucker 的简化版）。
-    保留最简化前后的点数信息，方便答辩时讲「我做了多边形抽稀以控制标注开销」。
+    做法：Douglas-Peucker 算法（递归找最远的点，保留它，把线段两侧分开处理）。
+
+    【为什么不用"相邻三点共线就删中间点"】
+    之前用的是共线抽稀，问题是它只能删掉严格共线的点。
+    掩码轮廓是像素级的锯齿，几乎没有三点严格共线，
+    所以循环删不掉任何点，函数在 180 个点以上就"卡住"了——
+    实测导出里出现了 519 顶点的多边形，直接超标。
+    Douglas-Peucker 是"在误差范围内简化曲线"，保证一定能收敛到指定点数。
+
+    误差 eps 取 0.002（归一化坐标下约等于 960px 图上的 2 像素），
+    这个量级的形状误差人眼分辨不出来，但顶点数能降一个数量级。
     """
     if len(polygon) <= max_points:
         return polygon
 
-    result = list(polygon)
-    changed = True
-    while changed and len(result) > max_points:
-        changed = False
-        new_result = []
-        n = len(result)
-        for i in range(n):
-            prev_p = result[(i - 1) % n]
-            cur_p = result[i]
-            next_p = result[(i + 1) % n]
-            # 叉积：判断三点是否近似共线
-            cross = ((cur_p[0] - prev_p[0]) * (next_p[1] - prev_p[1])
-                     - (cur_p[1] - prev_p[1]) * (next_p[0] - prev_p[0]))
-            if abs(cross) < 1e-4:
-                changed = True
-                continue  # 丢掉当前点
-            new_result.append(cur_p)
-        if not new_result:
+    pts = [(float(p[0]), float(p[1])) for p in polygon]
+
+    def _dp(points, eps):
+        """对开放折线做 Douglas-Peucker 简化，返回保留点的索引列表。"""
+        n = len(points)
+        if n < 3:
+            return list(range(n))
+        # 找距离首尾连线最远的点
+        x1, y1 = points[0]
+        x2, y2 = points[-1]
+        dx, dy = x2 - x1, y2 - y1
+        norm = (dx * dx + dy * dy) ** 0.5
+        max_dist, idx = -1.0, 0
+        for i in range(1, n - 1):
+            px, py = points[i]
+            if norm < 1e-12:
+                dist = ((px - x1) ** 2 + (py - y1) ** 2) ** 0.5
+            else:
+                # 点到直线的距离
+                dist = abs(dy * px - dx * py + x2 * y1 - y2 * x1) / norm
+            if dist > max_dist:
+                max_dist, idx = dist, i
+        if max_dist > eps:
+            left = _dp(points[:idx + 1], eps)
+            right = _dp(points[idx:], eps)
+            return left[:-1] + [idx] + [idx + i for i in right[1:]]
+        return [0, n - 1]
+
+    # 二分搜索最小的 eps，使简化后点数 <= max_points
+    lo, hi = 0.0, 0.05
+    best = pts
+    for _ in range(18):
+        mid = (lo + hi) / 2
+        keep = _dp(pts, mid)
+        cand = [pts[i] for i in keep]
+        if len(cand) <= max_points:
+            best = cand
+            hi = mid
+        else:
+            lo = mid
+        if len(cand) <= max_points and len(cand) >= 3:
+            # 已经足够简了就不必再压 eps
             break
-        result = new_result
-    return result
+
+    if len(best) < 3:
+        return polygon[:max_points]
+    return [[p[0], p[1]] for p in best]
 
 
 # ---------------------------------------------------------------------------

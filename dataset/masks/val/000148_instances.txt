@@ -1,10 +1,7 @@
-1 tv
+1 chair
 2 chair
-3 bottle
+3 tv
 4 dining table
-5 tv
-6 chair
+5 bottle
+6 book
 7 bottle
-8 bottle
-9 book
-10 chair

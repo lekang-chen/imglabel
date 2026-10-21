@@ -1,11 +1,11 @@
 1 person
 2 person
 3 chair
-4 person
-5 chair
-6 dining table
-7 person
-8 person
+4 chair
+5 dining table
+6 chair
+7 chair
+8 dining table
 9 person
 10 person
 11 person
@@ -14,34 +14,19 @@
 14 person
 15 person
 16 person
-17 person
-18 dining table
+17 cup
+18 cup
 19 person
 20 person
-21 dining table
+21 cup
 22 person
 23 cup
 24 person
 25 bottle
-26 chair
-27 chair
-28 person
+26 person
+27 person
+28 cup
 29 cup
 30 cup
-31 person
-32 chair
-33 person
-34 person
-35 person
-36 person
-37 cup
-38 cup
-39 person
-40 cup
-41 person
-42 person
-43 cup
-44 cup
-45 cup
-46 chair
-47 person
+31 cup
+32 cup

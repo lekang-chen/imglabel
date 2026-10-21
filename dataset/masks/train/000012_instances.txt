@@ -1,15 +1,15 @@
-1 tv
-2 book
-3 book
+1 dining table
+2 tv
+3 laptop
 4 book
-5 book
+5 bottle
 6 book
 7 book
 8 book
 9 book
 10 book
 11 book
-12 book
+12 cup
 13 book
 14 book
 15 book
@@ -18,11 +18,6 @@
 18 book
 19 book
 20 book
-21 tv
-22 laptop
+21 book
+22 book
 23 book
-24 cup
-25 bottle
-26 book
-27 dining table
-28 book

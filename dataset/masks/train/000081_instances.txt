@@ -1,7 +1,6 @@
-1 bottle
+1 dining table
 2 tv
-3 bottle
+3 potted plant
 4 bottle
-5 potted plant
+5 bottle
 6 bottle
-7 dining table

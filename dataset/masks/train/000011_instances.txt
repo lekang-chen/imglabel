@@ -1,6 +1,4 @@
-1 laptop
-2 person
-3 laptop
-4 person
-5 book
-6 dining table
+1 dining table
+2 laptop
+3 person
+4 book

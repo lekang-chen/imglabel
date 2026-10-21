@@ -1,17 +1,9 @@
-1 tv
+1 couch
 2 chair
-3 chair
-4 couch
-5 book
-6 book
+3 couch
+4 chair
+5 tv
+6 potted plant
 7 book
-8 tv
-9 chair
-10 couch
-11 chair
-12 book
-13 couch
-14 book
-15 couch
-16 potted plant
-17 cup
+8 book
+9 cup

@@ -1,9 +1,6 @@
 1 tv
-2 person
-3 laptop
-4 cup
-5 tv
-6 person
-7 laptop
-8 cup
-9 laptop
+2 laptop
+3 person
+4 laptop
+5 cup
+6 cup
