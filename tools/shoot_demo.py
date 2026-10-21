@@ -60,6 +60,79 @@ def shoot(browser, out_path, url=BASE_URL, wait=6000, size="1600,950"):
     return ok
 
 
+def shoot_scripted(browser, out_path, script, wait=9000, size="1600,950"):
+    """先执行一段页面脚本，再截图。
+
+    用于拍「需要交互才能出现的状态」——比如选中某个对象后的聚焦视图、
+    勾选框筛选后的效果。这些状态没法用 URL 参数直接进入。
+    """
+    # 把脚本挂到页面上，用 ?uitest=1 触发加载
+    with open(os.path.join(BASE_DIR, "canvas", "demo_script.js"), "w",
+              encoding="utf-8") as f:
+        f.write(script)
+    cmd = [
+        browser, "--headless=new", "--disable-gpu", "--hide-scrollbars",
+        "--window-size=" + size,
+        "--virtual-time-budget=%d" % wait,
+        "--user-data-dir=" + PROFILE,
+        "--screenshot=" + out_path,
+        BASE_URL + "?uitest=1",
+    ]
+    r = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+    ok = os.path.exists(out_path) and os.path.getsize(out_path) > 5000
+    print("  %s  %s" % ("OK " if ok else "FAIL", os.path.basename(out_path)))
+    return ok
+
+
+# ---------------------------------------------------------------------------
+# 交互态截图用的脚本
+# ---------------------------------------------------------------------------
+SCRIPT_FOCUS = """
+(async () => {
+  // 等页面初始化完成
+  for (let i = 0; i < 60; i++) {
+    if (window.__APP__ && window.__APP__.S && window.__APP__.S.images.length) break;
+    await new Promise(r => setTimeout(r, 250));
+  }
+  {
+    const A = window.__APP__;
+    if (!A) return;
+    // 选一张对象多的图
+    const rich = A.S.images.filter(i => i.total > 6).sort((a,b)=>b.total-a.total)[0];
+    if (rich) { await A.selectImage(rich.name); await new Promise(r=>setTimeout(r,1500)); }
+    // 选中第 3 个对象 -> 进入聚焦
+    const objs = A.S.anno.objects;
+    if (objs[2]) {
+      A.S.selectedId = objs[2].id;
+      A.S.focusMode = true;
+      A.renderObjects();
+      A.draw();
+    }
+  }
+})();
+"""
+
+SCRIPT_CHECKBOX = """
+(async () => {
+  for (let i = 0; i < 60; i++) {
+    if (window.__APP__ && window.__APP__.S && window.__APP__.S.images.length) break;
+    await new Promise(r => setTimeout(r, 250));
+  }
+  {
+    const A = window.__APP__;
+    if (!A) return;
+    const rich = A.S.images.filter(i => i.total > 6).sort((a,b)=>b.total-a.total)[0];
+    if (rich) { await A.selectImage(rich.name); await new Promise(r=>setTimeout(r,1500)); }
+    // 取消勾选前几个对象，演示筛选
+    A.S.focusMode = false;
+    A.S.anno.objects.slice(0, 4).forEach(o => A.S.unchecked.add(o.id));
+    A.renderObjects();
+    A.draw();
+  }
+})();
+"""
+
+
 def main():
     browser = find_browser()
     if not browser:
@@ -91,6 +164,20 @@ def main():
         print("截图:", desc)
         shoot(browser, os.path.join(DEMO_DIR, fname),
               url=BASE_URL + query, wait=wait)
+
+    # 交互态截图（需要脚本驱动才能出现的状态）
+    print("截图: 聚焦模式（选中单个对象）")
+    shoot_scripted(browser, os.path.join(DEMO_DIR, "04_聚焦模式_只显示选中对象.png"),
+                   SCRIPT_FOCUS, wait=11000)
+
+    print("截图: 复选框筛选（隐藏部分对象）")
+    shoot_scripted(browser, os.path.join(DEMO_DIR, "05_复选框筛选_隐藏部分对象.png"),
+                   SCRIPT_CHECKBOX, wait=11000)
+
+    # 清理临时脚本
+    tmp_script = os.path.join(BASE_DIR, "canvas", "demo_script.js")
+    if os.path.exists(tmp_script):
+        os.remove(tmp_script)
 
     print("\n完成。demo/ 目录内容：")
     for f in sorted(os.listdir(DEMO_DIR)):

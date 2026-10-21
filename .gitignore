@@ -46,3 +46,4 @@ dataset/labels/*.cache
 
 # 截图调试用的第二个 profile
 .edge_tmp*/
+demo_script.js

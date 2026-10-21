@@ -26,7 +26,13 @@ const S = {
   scale: 1,               // 缩放比例
   offsetX: 0, offsetY: 0, // 画布偏移
   showMask: true, showBox: false, showLabel: true,
+  unchecked: new Set(),    // 复选框取消勾选的对象 id（勾选 = 显示）
+  focusMode: true,         // 聚焦：画布只显示当前选中的对象
+  hoverId: null,           // 鼠标悬停的对象 id
   brushSize: 18,
+  brushMask: null,         // 画笔位图掩码 {id, cv, cx, w, h, k}
+  scratch: null,           // 画笔着色暂存画布
+  mouse: { x: 0, y: 0, in: false },
   drawing: false,         // 多边形绘制中
   draftPts: [],           // 多边形草稿点
   painting: false,        // 画笔涂抹中
@@ -134,6 +140,12 @@ async function selectImage(name) {
   S.selectedId = null;
   S.draftPts = [];
   S.drawing = false;
+  // 换图时重置可见性状态：新图默认全部显示
+  S.unchecked = new Set();
+  S.focusMode = true;
+  S.hoverId = null;
+  S.brushMask = null;
+  syncFocusBtn();
 
   $('emptyHint').classList.add('hidden');
 
@@ -197,7 +209,7 @@ function draw() {
   ctx.drawImage(S.img, S.offsetX, S.offsetY,
                 S.img.width * S.scale, S.img.height * S.scale);
 
-  const objs = S.anno.objects;
+  const objs = visibleObjects();
 
   if (S.mode === 'sem') {
     drawSemantic(objs);
@@ -225,40 +237,55 @@ function draw() {
 function drawObject(o) {
   const col = S.colorMap[o.class] || '#94a3b8';
   const sel = o.id === S.selectedId;
+  const hov = o.id === S.hoverId && !sel;
   const pts = o.polygon.map(p => toCanvas(p[0], p[1]));
 
   ctx.save();
   if (S.mode === 'det') {
-    // 检测模式：只画外接矩形
+    // 检测模式：画外接矩形（这是检测任务本身的语义）
     const xs = pts.map(p => p[0]), ys = pts.map(p => p[1]);
     const x = Math.min(...xs), y = Math.min(...ys);
     const w = Math.max(...xs) - x, h = Math.max(...ys) - y;
     ctx.strokeStyle = col;
     ctx.lineWidth = sel ? 2.5 : 1.5;
     ctx.strokeRect(x, y, w, h);
-    if (S.showLabel) drawLabel(o, x, y, col);
+    if (S.showLabel && (sel || hov)) drawLabel(o, x, y, col);
   } else {
     // 掩码模式：填充多边形
     ctx.beginPath();
     pts.forEach((p, i) => i === 0 ? ctx.moveTo(p[0], p[1]) : ctx.lineTo(p[0], p[1]));
     ctx.closePath();
-    ctx.fillStyle = hexA(col, sel ? 0.38 : 0.26);
+    ctx.fillStyle = hexA(col, sel ? 0.34 : (hov ? 0.28 : 0.20));
     ctx.fill();
-    ctx.strokeStyle = col;
-    ctx.lineWidth = sel ? 2.5 : 1.2;
+
+    // 描边：按轮廓走，不再用矩形框圈住
+    // 未选中时细一点、淡一点，避免满屏线条看不清图
+    ctx.strokeStyle = sel ? col : hexA(col, hov ? 0.85 : 0.55);
+    ctx.lineWidth = sel ? 2.2 : (hov ? 1.6 : 1);
     ctx.stroke();
 
+    // 选中时在轮廓外再描一圈白边，强化"这就是我要改的那个"
+    if (sel) {
+      ctx.save();
+      ctx.strokeStyle = 'rgba(255,255,255,.9)';
+      ctx.lineWidth = 4.5;
+      ctx.globalCompositeOperation = 'destination-over';
+      ctx.stroke();
+      ctx.restore();
+    }
+
     if (S.showBox && sel) {
+      // 「框」开关仍然可用：额外叠加外接矩形（调试用）
       const xs = pts.map(p => p[0]), ys = pts.map(p => p[1]);
       ctx.setLineDash([3, 3]);
-      ctx.strokeStyle = 'rgba(255,255,255,.55)';
+      ctx.strokeStyle = 'rgba(255,255,255,.45)';
       ctx.lineWidth = 1;
       ctx.strokeRect(Math.min(...xs), Math.min(...ys),
                      Math.max(...xs) - Math.min(...xs),
                      Math.max(...ys) - Math.min(...ys));
       ctx.setLineDash([]);
     }
-    if (S.showLabel) {
+    if (S.showLabel && (sel || hov)) {
       const xs = pts.map(p => p[0]), ys = pts.map(p => p[1]);
       drawLabel(o, Math.min(...xs), Math.min(...ys), col);
     }
@@ -283,7 +310,6 @@ function drawSemantic(objs) {
     ctx.stroke();
   });
 }
-
 function drawLabel(o, x, y, col) {
   const txt = o.class;
   ctx.save();
@@ -310,11 +336,32 @@ function hexA(hex, a) {
   return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`;
 }
 
+// ---------------------------------------------------------------- 可见性
+/**
+ * 判断对象是否应该在画布上显示。
+ *
+ * 两层控制，优先级从高到低：
+ *   1. 复选框没勾选  -> 不显示（用户主动隐藏）
+ *   2. 聚焦模式      -> 只显示选中的那一个
+ * 这样"点开一个对象想仔细看轮廓"时，别的对象不会糊在脸上。
+ */
+function isVisible(o) {
+  if (S.unchecked.has(o.id)) return false;
+  if (S.focusMode && S.selectedId) return o.id === S.selectedId;
+  return true;
+}
+
+function visibleObjects() {
+  if (!S.anno) return [];
+  return S.anno.objects.filter(isVisible);
+}
+
 // ---------------------------------------------------------------- 命中检测
 function hitTest(nx, ny) {
-  // 从后往前找（后画的在上面）
-  for (let i = S.anno.objects.length - 1; i >= 0; i--) {
-    const o = S.anno.objects[i];
+  // 从后往前找（后画的在上面）；只命中可见的对象
+  const objs = visibleObjects();
+  for (let i = objs.length - 1; i >= 0; i--) {
+    const o = objs[i];
     if (pointInPoly(nx, ny, o.polygon)) return o;
   }
   return null;
@@ -396,23 +443,72 @@ function changeClass(newCls) {
 // ---------------------------------------------------------------- 渲染面板
 function renderObjects() {
   const box = $('objList');
-  $('objCount').textContent = S.anno ? S.anno.objects.length : 0;
+  if (!S.anno) { $('objCount').textContent = '0'; box.innerHTML = ''; return; }
+  const total = S.anno.objects.length;
+  $('objCount').textContent = total ? `${visibleObjects().length}/${total}` : '0';
   box.innerHTML = '';
-  if (!S.anno || !S.anno.objects.length) {
+  if (!total) {
     box.innerHTML = '<p class="muted small" style="padding:8px">没有标注对象</p>';
     return;
   }
-  S.anno.objects.forEach(o => {
+
+  S.anno.objects.forEach((o, idx) => {
     const div = document.createElement('div');
     div.className = 'obj-item';
     if (o.id === S.selectedId) div.classList.add('active');
-    div.innerHTML =
-      `<span class="obj-swatch" style="background:${S.colorMap[o.class]||'#94a3b8'}"></span>` +
-      `<span class="obj-name">${o.class}</span>` +
-      `<span class="obj-tag ${o.edited ? 'edited' : ''}">${o.edited ? '已改' : (o.source === 'model' ? '草稿' : '人工')}</span>`;
-    div.onclick = () => { S.selectedId = o.id; renderObjects(); renderProps(); draw(); };
+    if (!isVisible(o)) div.classList.add('dimmed');
+
+    // 复选框：勾选 = 在画布上显示
+    const chk = document.createElement('input');
+    chk.type = 'checkbox';
+    chk.className = 'obj-chk';
+    chk.checked = !S.unchecked.has(o.id);
+    chk.title = '显示 / 隐藏该对象';
+    chk.onclick = (e) => e.stopPropagation();
+    chk.onchange = () => {
+      if (chk.checked) S.unchecked.delete(o.id);
+      else S.unchecked.add(o.id);
+      renderObjects();
+      draw();
+    };
+
+    const idxSpan = document.createElement('span');
+    idxSpan.className = 'obj-idx';
+    idxSpan.textContent = idx + 1;
+
+    const sw = document.createElement('span');
+    sw.className = 'obj-swatch';
+    sw.style.background = S.colorMap[o.class] || '#94a3b8';
+
+    const nm = document.createElement('span');
+    nm.className = 'obj-name';
+    nm.textContent = o.class;
+
+    const tg = document.createElement('span');
+    tg.className = 'obj-tag' + (o.edited ? ' edited' : '');
+    tg.textContent = o.edited ? '已改' : (o.source === 'model' ? '草稿' : '人工');
+
+    div.appendChild(chk);
+    div.appendChild(idxSpan);
+    div.appendChild(sw);
+    div.appendChild(nm);
+    div.appendChild(tg);
+
+    // 点一行 = 选中它，并自动进入聚焦（只显示它）
+    div.onclick = () => {
+      S.selectedId = o.id;
+      S.focusMode = true;
+      syncFocusBtn();
+      renderObjects(); renderProps(); draw();
+    };
     box.appendChild(div);
   });
+}
+
+/** 聚焦按钮的启用态要和状态一致 */
+function syncFocusBtn() {
+  const b = $('btnFocusOnly');
+  if (b) b.classList.toggle('active', S.focusMode);
 }
 
 function renderProps() {
@@ -471,6 +567,8 @@ function saveSoon() {
 
 async function saveNow() {
   if (!S.current || !S.anno) return;
+  // 测试模式下不落盘，避免自动化测试污染真实标注数据
+  if (window.__UITEST__) { S.dirty = false; return; }
   try {
     const d = await api('/api/annotation/' + encodeURIComponent(S.current), {
       method: 'POST',
@@ -503,15 +601,48 @@ function bindEvents() {
     b.onclick = () => {
       document.querySelectorAll('.tool-btn[data-tool]').forEach(x => x.classList.remove('active'));
       b.classList.add('active');
+      const prev = S.tool;
       S.tool = b.dataset.tool;
-      canvas.className = S.tool === 'select' ? 'tool-select' : '';
+      canvas.className = 'tool-' + S.tool;
       if (S.tool !== 'polygon') { S.drawing = false; S.draftPts = []; }
       if (S.tool === 'brush' || S.tool === 'erase') {
-        if (!S.selectedId) toast('先用「选择」工具点一个对象，再来涂抹');
+        if (!S.selectedId) {
+          toast('先用「选择」工具点一个对象，再来涂抹');
+          S.tool = prev;
+          canvas.className = 'tool-' + S.tool;
+          b.classList.remove('active');
+          const pb = document.querySelector(`.tool-btn[data-tool="${prev}"]`);
+          if (pb) pb.classList.add('active');
+          return;
+        }
+        // 画笔需要一张位图掩码，把当前多边形栅格化进去
+        const o = S.anno.objects.find(x => x.id === S.selectedId);
+        if (o) buildBrushMask(o);
+      } else {
+        S.brushMask = null;
       }
       draw();
     };
   });
+
+  // 对象可见性：全选 / 全不选 / 仅看选中
+  $('btnShowAll').onclick = () => {
+    S.unchecked.clear();
+    S.focusMode = false;
+    syncFocusBtn();
+    renderObjects(); draw();
+  };
+  $('btnHideAll').onclick = () => {
+    S.unchecked = new Set(S.anno ? S.anno.objects.map(o => o.id) : []);
+    S.focusMode = false;
+    syncFocusBtn();
+    renderObjects(); draw();
+  };
+  $('btnFocusOnly').onclick = () => {
+    S.focusMode = !S.focusMode;
+    syncFocusBtn();
+    renderObjects(); draw();
+  };
 
   // 画布交互
   canvas.onmousedown = onDown;
@@ -572,12 +703,25 @@ function onDown(e) {
   if (S.tool === 'select') {
     const hit = hitTest(nx, ny);
     S.selectedId = hit ? hit.id : null;
+    if (!hit) {
+      // 点空白：退出聚焦，恢复显示全部（未勾选的除外）
+      S.focusMode = false;
+      syncFocusBtn();
+    } else {
+      S.focusMode = true;
+    }
     renderObjects(); renderProps(); draw();
     return;
   }
 
   if (S.tool === 'brush' || S.tool === 'erase') {
     if (!S.selectedId) { toast('先选中一个对象再涂抹'); return; }
+    // 掩码不存在或属于别的对象 -> 重建
+    if (!S.brushMask || S.brushMask.id !== S.selectedId) {
+      const o = S.anno.objects.find(x => x.id === S.selectedId);
+      if (!o) return;
+      buildBrushMask(o);
+    }
     S.painting = true;
     S.paintTarget = S.selectedId;
     paintAt(nx, ny);
@@ -585,82 +729,145 @@ function onDown(e) {
 }
 
 function onMove(e) {
+  const [cx, cy] = canvasPos(e);
+  S.mouse.x = cx; S.mouse.y = cy; S.mouse.in = true;
+
   if (S.painting) {
-    const [cx, cy] = canvasPos(e);
     const [nx, ny] = toNorm(cx, cy);
     paintAt(nx, ny);
+    return;
+  }
+
+  // 悬停高亮：让用户知道鼠标底下是哪个对象
+  if (S.tool === 'select' && S.anno) {
+    const [nx, ny] = toNorm(cx, cy);
+    const hit = hitTest(nx, ny);
+    const hid = hit ? hit.id : null;
+    if (hid !== S.hoverId) {
+      S.hoverId = hid;
+      canvas.style.cursor = hid ? 'pointer' : 'default';
+      draw();
+    }
   }
 }
 
 function onUp(e) {
   if (S.painting) {
     S.painting = false;
-    const o = S.anno.objects.find(x => x.id === S.paintTarget);
-    if (o) { markEdited(o.id); saveSoon(); renderObjects(); }
+    commitBrush();
     draw();
+    return;
   }
   // 多边形：双击闭合
   if (S.drawing && e.detail === 2) finishPolygon();
 }
 
 /**
- * 画笔涂抹。
- * 做法：在目标对象的多边形上，把笔刷覆盖到的像素加进多边形。
- * 简化实现：以笔刷为圆心，取圆周上的点做「凸包合并」——
- * 实际项目里通常用位图 mask 栅格化后转轮廓，这里为了前端轻量，
- * 采用「圆周采样 + 轮廓合并」的近似方式。
+ * 画笔：位图掩码方案。
+ *
+ * 旧实现是「取凸包」—— 一涂就把物体的凹角填平、轮廓变方，越涂越不像原形。
+ * 现在的做法是正经的位图编辑：
+ *   1. 把目标物体的多边形栅格化成一张位图掩码
+ *   2. 画笔在掩码上涂抹（加=涂白，擦=擦掉）
+ *   3. 松手后把掩码重新提取成多边形
+ * 这样凹角能保留，也能真的把多边形"擦掉一块"。
  */
 function paintAt(nx, ny) {
   const o = S.anno.objects.find(x => x.id === S.paintTarget);
   if (!o) return;
-  const r = S.brushSize / S.img.width / S.scale;
+  const m = S.brushMask;
+  if (!m) return;
 
+  // 归一化坐标 -> 掩码像素坐标
+  const px = nx * m.w, py = ny * m.h;
+  // 笔刷半径：brushSize 是「屏幕像素」，换算到掩码像素
+  const r = S.brushSize / S.scale * (m.w / (S.anno.width || m.w));
+
+  const ctx = m.ctx;
+  ctx.save();
   if (S.tool === 'erase') {
-    // 橡皮：把落在笔刷内的多边形顶点去掉
-    o.polygon = o.polygon.filter(p =>
-      Math.hypot(p[0] - nx, p[1] - ny) > r);
-    if (o.polygon.length < 3) o.polygon = o.polygon.slice(0, 3);
+    // 擦：把命中的像素变透明
+    ctx.globalCompositeOperation = 'destination-out';
+    ctx.fillStyle = '#000';
   } else {
-    // 画笔：把笔刷圆周上的点并入多边形
-    const pts = [];
-    const N = 12;
-    for (let i = 0; i < N; i++) {
-      const a = (i / N) * Math.PI * 2;
-      pts.push([nx + r * Math.cos(a), ny + r * Math.sin(a)]);
-    }
-    o.polygon = mergePolygon(o.polygon, pts);
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.fillStyle = '#fff';
   }
+  ctx.beginPath();
+  ctx.arc(px, py, Math.max(1, r), 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+
   draw();
 }
 
-/** 把 addPts 合并进 polygon（凸包 + 简化），实现「涂抹即扩张」。 */
-function mergePolygon(poly, addPts) {
-  const all = poly.concat(addPts);
-  // 凸包
-  const pts = all.slice().sort((a, b) => a[0] - b[0] || a[1] - b[1]);
-  const cross = (o, a, b) => (a[0]-o[0])*(b[1]-o[1]) - (a[1]-o[1])*(b[0]-o[0]);
-  const lower = [];
-  for (const p of pts) {
-    while (lower.length >= 2 && cross(lower[lower.length-2], lower[lower.length-1], p) <= 0) lower.pop();
-    lower.push(p);
+/** 把掩码的当前状态提取成多边形并写回对象 */
+function commitBrush() {
+  const o = S.anno.objects.find(x => x.id === S.paintTarget);
+  const m = S.brushMask;
+  if (!o || !m) return;
+
+  const img = m.ctx.getImageData(0, 0, m.w, m.h);
+  const poly = Geo.maskToPolygon(img.data, m.w, m.h, {
+    eps: 1.0,
+    maxPts: 180,
+    scaleX: m.w,          // 掩码像素 -> 归一化（x/y 分别缩放，图未必是正方形）
+    scaleY: m.h,
+  });
+
+  if (!poly || poly.length < 3) {
+    toast('涂抹后形状为空，已放弃这次修改', true);
+    S.brushMask = null;
+    draw();
+    return;
   }
-  const upper = [];
-  for (let i = pts.length - 1; i >= 0; i--) {
-    const p = pts[i];
-    while (upper.length >= 2 && cross(upper[upper.length-2], upper[upper.length-1], p) <= 0) upper.pop();
-    upper.push(p);
+
+  o.polygon = poly;
+  o.edited = true;
+  S.dirty = true;
+  // 测试模式下不写修正流水、不落盘
+  if (window.__UITEST__) {
+    S.brushMask = null;
+    renderObjects();
+    draw();
+    return;
   }
-  const hull = lower.slice(0, -1).concat(upper.slice(0, -1));
-  // 抽稀
-  const simple = [];
-  for (let i = 0; i < hull.length; i++) {
-    const prev = hull[(i - 1 + hull.length) % hull.length];
-    const cur = hull[i];
-    const next = hull[(i + 1) % hull.length];
-    const c = Math.abs((cur[0]-prev[0])*(next[1]-prev[1]) - (cur[1]-prev[1])*(next[0]-prev[0]));
-    if (c > 1e-5) simple.push(cur);
+  const existed = S.edits.find(e => e.object_id === o.id);
+  if (!existed) {
+    S.edits.push({ object_id: o.id, class: o.class, type: '修正' });
+    renderEditLog();
   }
-  return simple.length >= 3 ? simple : hull;
+  S.origById[o.id] = JSON.stringify({ id: o.id, class: o.class,
+                                     polygon: o.polygon, source: o.source,
+                                     edited: true });
+  S.brushMask = null;
+  renderObjects();
+  saveSoon();
+  toast('已更新轮廓（' + poly.length + ' 个顶点）');
+}
+
+/** 为目标对象建立一张位图掩码（把现有多边形栅格化进去） */
+function buildBrushMask(o) {
+  const w = Math.max(16, Math.round(S.anno.width || 960));
+  const h = Math.max(16, Math.round(S.anno.height || 720));
+  // 掩码不需要原图那么精细，取一个能保证形状的下采样倍率即可
+  const k = Math.min(1, 700 / Math.max(w, h));
+  const mw = Math.max(8, Math.round(w * k));
+  const mh = Math.max(8, Math.round(h * k));
+
+  const cv = document.createElement('canvas');
+  cv.width = mw; cv.height = mh;
+  const cx = cv.getContext('2d');
+  cx.fillStyle = '#fff';
+  cx.beginPath();
+  o.polygon.forEach((p, i) => {
+    const x = p[0] * mw, y = p[1] * mh;
+    i === 0 ? cx.moveTo(x, y) : cx.lineTo(x, y);
+  });
+  cx.closePath();
+  cx.fill();
+
+  S.brushMask = { id: o.id, cv, ctx: cx, w: mw, h: mh, k };
 }
 
 /** 闭合多边形：问用户类别，然后加入对象列表。 */
@@ -878,3 +1085,25 @@ document.addEventListener('keydown', e => {
 });
 
 init();
+
+// 暴露内部状态给自动化测试和调试用。
+// （顶层 const 不会挂到 window 上，这里显式导出）
+window.__APP__ = {
+  get S() { return S; },
+  draw, buildBrushMask, visibleObjects, isVisible, toCanvas, toNorm,
+  renderObjects, selectImage, hitTest, commitBrush,
+};
+
+// 自动化测试脚本（仅在带 ?uitest=1 时按需加载）
+if (location.search.includes('uitest=1')) {
+  // 测试模式下禁止落盘：UI 测试会伪造对象来验证交互，
+  // 如果让它写进真实标注文件，就会污染项目数据。
+  window.__UITEST__ = true;
+  const s = document.createElement('script');
+  s.src = '/static/ui_test_script.js';
+  document.body.appendChild(s);
+  // 演示截图脚本：拍交互态（聚焦模式、筛选效果）时用
+  const d = document.createElement('script');
+  d.src = '/static/demo_script.js';
+  document.body.appendChild(d);
+}

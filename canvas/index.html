@@ -124,6 +124,12 @@
       <span class="muted mono" id="objCount">0</span>
     </div>
 
+    <div class="obj-filter">
+      <button class="mini-btn" id="btnShowAll" title="显示全部对象">全选</button>
+      <button class="mini-btn" id="btnHideAll" title="隐藏全部对象">全不选</button>
+      <button class="mini-btn" id="btnFocusOnly" title="只显示当前选中的对象">仅看选中</button>
+    </div>
+
     <div class="obj-list" id="objList"></div>
 
     <div class="panel-head sub">
@@ -156,6 +162,7 @@
 
 <div class="toast hidden" id="toast"></div>
 
+<script src="/static/geom.js"></script>
 <script src="/static/app.js"></script>
 </body>
 </html>
