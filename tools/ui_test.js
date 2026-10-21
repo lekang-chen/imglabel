@@ -15,35 +15,38 @@ const EDGE = 'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe';
 const OUT = path.join(__dirname, '..', 'demo');
 if (!fs.existsSync(OUT)) fs.mkdirSync(OUT, { recursive: true });
 
-// 1) 往页面里注入测试脚本（写在临时 HTML 里，iframe 加载主页面）
-const TEST_JS = fs.readFileSync(path.join(__dirname, 'ui_test_script.js'), 'utf8');
-
+// 1) 生成同源测试页。
+//    必须和应用同源（放在 canvas/ 目录下由 Flask 提供），
+//    否则 iframe 会被跨域策略拦住，父页拿不到 iframe 的 window。
+const HARNESS = path.join(__dirname, '..', 'canvas', '_ui_harness.html');
 const harness = `<!DOCTYPE html><html><head><meta charset="utf-8">
 <style>html,body{margin:0;height:100%}iframe{border:0;width:100%;height:100%}
-#report{position:fixed;right:0;bottom:0;width:420px;max-height:60vh;overflow:auto;
+#report{position:fixed;right:0;bottom:0;width:460px;max-height:70vh;overflow:auto;
 background:#fff;font:11px monospace;padding:6px;z-index:9;border:1px solid #000;white-space:pre}</style>
 </head><body>
-<iframe id="fr" src="http://127.0.0.1:5000/"></iframe>
-<pre id="report">running…</pre>
+<iframe id="fr" src="/?uitest=1"></iframe>
+<pre id="report">running...</pre>
 <script>
 const fr = document.getElementById('fr');
 fr.onload = async () => {
   const w = fr.contentWindow, d = fr.contentDocument;
-  await new Promise(r => setTimeout(r, 2500));
+  // 等主页面初始化完
+  for (let i = 0; i < 40; i++) {
+    if (w.__APP__ && w.__APP__.S && w.__APP__.S.images.length) break;
+    await new Promise(r => setTimeout(r, 250));
+  }
   try {
     const out = await w.__runUiTests(d, w);
     document.getElementById('report').textContent = out;
   } catch (e) {
     document.getElementById('report').textContent = 'FATAL: ' + (e && e.stack || e);
   }
-  document.title = 'DONE';
 };
 </script>
-<script>${TEST_JS}</script>
 </body></html>`;
+fs.writeFileSync(HARNESS, harness, 'utf8');
 
-const tmp = path.join(process.env.TEMP || '.', 'ui_test_harness.html');
-fs.writeFileSync(tmp, harness, 'utf8');
+const URL = 'http://127.0.0.1:5000/static/_ui_harness.html';
 
 // 2) 无头浏览器跑一遍
 const shot = path.join(OUT, 'ui_test.png');
@@ -57,7 +60,7 @@ try {
     '--virtual-time-budget=20000',
     '--user-data-dir=' + profile,
     '--screenshot=' + shot,
-    'http://127.0.0.1:5000/static/_ui_harness.html',
+    URL,
   ], { stdio: 'pipe', timeout: 90000 });
   console.log('✓ 截图已生成:', shot);
 } catch (e) {
@@ -65,8 +68,8 @@ try {
   process.exit(1);
 }
 
-// 3) 报告：再跑一次拿文本（headless 截图不返回 DOM，这里用 CDP 太重，
-//    改为把报告写到 title 并用 --dump-dom 提取）
+// 3) 报告：再跑一次拿文本（headless 截图不返回 DOM，
+//    用 --dump-dom 提取页面上的报告块）
 try {
   const dom = execFileSync(EDGE, [
     '--headless=new',
@@ -75,7 +78,7 @@ try {
     '--virtual-time-budget=20000',
     '--user-data-dir=' + profile + '2',
     '--dump-dom',
-    'http://127.0.0.1:5000/static/_ui_harness.html',
+    URL,
   ], { encoding: 'utf8', timeout: 90000, maxBuffer: 1 << 24 });
 
   const m = dom.match(/<pre id="report">([\s\S]*?)<\/pre>/);
@@ -88,4 +91,7 @@ try {
   if (/FATAL|FAIL/.test(report)) process.exitCode = 1;
 } catch (e) {
   console.error('✗ 提取报告失败:', e.message);
+} finally {
+  // 清理临时 harness
+  if (fs.existsSync(HARNESS)) fs.unlinkSync(HARNESS);
 }

@@ -47,3 +47,6 @@ dataset/labels/*.cache
 # 截图调试用的第二个 profile
 .edge_tmp*/
 demo_script.js
+
+# UI 测试临时 harness（由 tools/ui_test.js 自动生成和清理）
+canvas/_ui_harness.html

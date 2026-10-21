@@ -51,10 +51,14 @@ python app.py
 ├─ exporter.py         三格式导出器 + 格式自检
 ├─ train.py            模型微调，自动探测硬件配置
 ├─ canvas/             前端界面（原生 canvas + JS，无框架依赖）
+│  ├─ app.js           交互逻辑（画笔、筛选、聚焦、三模式渲染）
+│  └─ geom.js          掩码轮廓提取 + 闭合环 D-P 抽稀（可单测）
 ├─ tools/
 │  ├─ prepare_data.py  从 COCO 筛选压缩出符合要求的数据集
 │  ├─ fast_download.py 多线程分片下载器
 │  ├─ test_core.py     核心逻辑自测（56 项）
+│  ├─ test_geom.js     前端几何算法单测（30 项，node 直跑）
+│  ├─ ui_test.js       真实浏览器交互测试（23 项，Edge headless）
 │  ├─ eval_draft.py    草稿质量评估（对照 COCO 真值算 P/R/F1）
 │  ├─ relabel_r2.py    用 best.pt 回标到独立目录（不覆盖 R1 草稿）
 │  ├─ compare_rounds.py R1/R2 修正率逐类对比
@@ -73,11 +77,18 @@ python app.py
 ## 自测
 
 ```bash
-python tools/test_core.py
+python tools/test_core.py     # 56 项：核心逻辑
+node tools/test_geom.js       # 30 项：前端几何算法
+node tools/ui_test.js         # 23 项：真实浏览器交互（需先启动服务）
 ```
 
-56 项，覆盖几何工具、掩码转多边形、三格式一致性、导出自检、边界情况、
-PNG 存盘往返一致性（防调色板模式回归）。
+共 **109 项**。覆盖：
+- 核心层：几何工具、掩码转多边形、三格式一致性、导出自检、边界情况、
+  PNG 存盘往返一致性（防调色板模式回归）
+- 几何层：缝隙追踪的面积精度、闭合环 D-P 抽稀、鞍点配对、顶点数上限
+- 交互层：复选框筛选、聚焦模式、画笔涂抹/擦除、轮廓描边
+
+> `ui_test.js` 在 `?uitest=1` 模式下会禁用落盘，自动化测试**不会污染真实标注数据**。
 
 ## 质量评估与迭代对比
 

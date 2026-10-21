@@ -1102,8 +1102,11 @@ if (location.search.includes('uitest=1')) {
   const s = document.createElement('script');
   s.src = '/static/ui_test_script.js';
   document.body.appendChild(s);
-  // 演示截图脚本：拍交互态（聚焦模式、筛选效果）时用
+  // 演示截图脚本：拍交互态（聚焦模式、筛选效果）时用。
+  // 这个文件由 tools/shoot_demo.py 在截图前临时生成，不进版本库，
+  // 所以用 onerror 静默忽略（404 不影响主功能）。
   const d = document.createElement('script');
   d.src = '/static/demo_script.js';
+  d.onerror = () => {};
   document.body.appendChild(d);
 }
