@@ -22,6 +22,7 @@ tools/package.py —— 提交包打包脚本
 import argparse
 import os
 import shutil
+import subprocess
 import sys
 import zipfile
 
@@ -32,6 +33,8 @@ CODE_FILES = [
     "app.py", "core.py", "prelabel.py", "exporter.py", "train.py",
     "requirements.txt", "README.md", "启动.bat", "ai_log.md", "提交信息.txt",
     ".gitignore",
+    # 答辩材料：评委问答 + 代码讲解，都是自己写的，必须一起交
+    "答辩准备.md", "代码讲解.md",
 ]
 CODE_DIRS = ["canvas", "tools"]
 
@@ -39,6 +42,11 @@ CODE_DIRS = ["canvas", "tools"]
 EXCLUDE_DIRS = {".venv", "venv", "__pycache__", "runs", ".git", "weights",
                  "data", ".idea", ".vscode"}
 EXCLUDE_SUFFIX = (".pyc", ".log", ".tmp", ".zip")
+
+# 任务书要求评委核验「包内 .git 提交历史」，
+# 所以 .git 目录要单独拷进压缩包（但不能走 EXCLUDE_DIRS 那条路）。
+# 只保留提交历史必需的部分，砍掉体积大的松散对象和日志。
+INCLUDE_GIT = True
 
 
 def copy_code(dst_root):
@@ -147,6 +155,31 @@ def main():
     for d in ("dataset", "model", "records", "demo"):
         copy_tree(os.path.join(BASE_DIR, d), os.path.join(stage, d))
 
+    # 拷贝 .git 提交历史（任务书要求评委核验包内 git 记录）
+    if INCLUDE_GIT:
+        src_git = os.path.join(BASE_DIR, ".git")
+        if os.path.isdir(src_git):
+            dst_git = os.path.join(stage, ".git")
+            # 只排除日志和临时文件。
+            # 注意：.git/objects/pack/*.pack 必须留着——它就是提交历史的实体，
+            # 删了 git 历史就废了。
+            shutil.copytree(src_git, dst_git, dirs_exist_ok=True,
+                            ignore=shutil.ignore_patterns("*.log", "*.tmp"))
+            # pack 文件要留着，它是提交历史的实体
+            n_commit = 0
+            try:
+                head = os.path.join(dst_git, "HEAD")
+                if os.path.exists(head):
+                    n_commit = sum(1 for ln in subprocess.run(
+                        ["git", "-C", stage, "rev-list", "--all"],
+                        capture_output=True, text=True).stdout.splitlines()
+                        if ln.strip())
+            except Exception:  # noqa: BLE001
+                n_commit = 0
+            print("  拷贝 .git 提交历史（%d 个提交）" % n_commit)
+        else:
+            print("  跳过 .git（目录不存在）")
+
     print("[3/4] 检查完整性")
     problems = check_required(stage)
     if problems:
@@ -162,7 +195,10 @@ def main():
         os.remove(zip_path)
     with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED, compresslevel=6) as z:
         for root, dirs, files in os.walk(stage):
-            dirs[:] = [d for d in dirs if d not in EXCLUDE_DIRS]
+            # 压缩时不能再排掉 .git——它已经在 stage 里了，
+            # 排掉的话任务书要求的"包内提交历史"就丢了。
+            skip = EXCLUDE_DIRS - {".git"} if INCLUDE_GIT else EXCLUDE_DIRS
+            dirs[:] = [d for d in dirs if d not in skip]
             for f in files:
                 full = os.path.join(root, f)
                 rel = os.path.relpath(full, stage)

@@ -184,7 +184,9 @@ def export_dataset(annotations, out_dir, image_dir, val_ratio=VAL_RATIO,
     yaml_path = os.path.join(out_dir, "data.yaml")
     with open(yaml_path, "w", encoding="utf-8") as f:
         f.write("# 由 exporter.py 自动生成，请勿手工修改\n")
-        f.write("path: %s\n" % out_dir.replace("\\", "/"))
+        # path 写 "."（相对本文件所在目录），这样提交包换到任何机器上都能用。
+        # train.py 在真正训练前会把它改写成本机的绝对路径。
+        f.write("path: .\n")
         f.write("train: images/train\n")
         f.write("val: images/val\n")
         f.write("nc: %d\n" % len(CLASSES))

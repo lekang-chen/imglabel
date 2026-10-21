@@ -87,7 +87,45 @@ def refuse_if_not_exported():
     if n_images == 0:
         sys.exit("[错误] 训练集里没有图片，请重新导出。")
 
+    # --- 把 data.yaml 里的 path 改成本机实际路径 ---
+    # 导出时写进去的是导出那一刻的绝对路径。如果评委把提交包解压到别的目录，
+    # 那个路径就失效了，ultralytics 会报"找不到数据集"。
+    # 所以每次训练前都按当前脚本位置重写一遍，保证换机器也能跑。
+    _rewrite_data_yaml_path()
+
     return n_images
+
+
+def _rewrite_data_yaml_path():
+    """
+    把 data.yaml 的 path 字段改成本机 DATASET_DIR 的绝对路径。
+
+    为什么需要：
+    - data.yaml 是导出时生成的，里面记的是当时的绝对路径；
+    - 提交包被评委解压到别的目录后，这个路径就不存在了；
+    - 训练前重写一次，等于让数据集配置"跟着机器走"。
+
+    只改 path 这一行，nc / names / train / val 保持导出时的样子不动。
+    """
+    try:
+        with open(DATA_YAML, encoding="utf-8") as f:
+            lines = f.read().splitlines()
+    except OSError:
+        return
+
+    new_path = DATASET_DIR.replace("\\", "/")
+    out, replaced = [], False
+    for ln in lines:
+        if ln.strip().startswith("path:"):
+            out.append("path: %s" % new_path)
+            replaced = True
+        else:
+            out.append(ln)
+    if not replaced:
+        out.insert(0, "path: %s" % new_path)
+
+    with open(DATA_YAML, "w", encoding="utf-8") as f:
+        f.write("\n".join(out) + "\n")
 
 
 def probe_config(n_images):
