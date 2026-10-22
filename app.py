@@ -55,6 +55,13 @@ for d in (DATA_DIR, IMAGE_DIR, ANNO_DIR, DATASET_DIR, MODEL_DIR, RECORD_DIR):
 
 app = Flask(__name__, static_folder="canvas", static_url_path="/static")
 app.config["JSON_AS_ASCII"] = False
+# 静态文件不缓存：这是本地开发服务器，每次都在改前端。
+# 【为什么必须关掉】Flask 默认给静态文件打 12 小时 max-age，
+# 改完 app.js / 测试脚本后浏览器仍跑旧代码，
+# 表现为「代码明明改了，测试结果却和上次一模一样」——
+# 极具欺骗性，会让人以为是新代码写错了。开发期一律走no-cache。
+app.config["SEND_FILE_MAX_AGE_DEFAULT"] = 0
+app.config["SEND_FILE_MAX_AGE"] = 0
 
 job_manager = JobManager()
 

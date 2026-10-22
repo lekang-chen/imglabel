@@ -24,7 +24,7 @@ const harness = `<!DOCTYPE html><html><head><meta charset="utf-8">
 #report{position:fixed;right:0;bottom:0;width:460px;max-height:70vh;overflow:auto;
 background:#fff;font:11px monospace;padding:6px;z-index:9;border:1px solid #000;white-space:pre}</style>
 </head><body>
-<iframe id="fr" src="/?uitest=1"></iframe>
+<iframe id="fr" src="/?uitest=1&t=${Date.now()}"></iframe>
 <pre id="report">running...</pre>
 <script>
 const fr = document.getElementById('fr');
@@ -48,9 +48,48 @@ fs.writeFileSync(HARNESS, harness, 'utf8');
 
 const URL = 'http://127.0.0.1:5000/static/_ui_harness.html';
 
+// 1.5) 防呆：确认页面加载的测试脚本就是canvas/ 下这一份。
+// 【踩过的坑】早期把测试脚本同时放在 tools/ 和 canvas/ 两处，
+// 实际被 Flask 提供的是 canvas/ 那份，而改的是 tools/ 那份——
+// 于是「代码改了半天，测试跑出来还是旧的23 条」，
+// 且旧结果全绿，看起来一切正常，极难察觉。
+// 这里直接比对服务端返回的内容与本地文件，不一致就立刻报错。
+(function assertServerHasLatestScript() {
+  const LOCAL = path.join(__dirname, '..', 'canvas', 'ui_test_script.js');
+  const local = fs.readFileSync(LOCAL, 'utf8');
+  const http = require('http');
+  http.get({ host: '127.0.0.1', port: 5000, path: '/static/ui_test_script.js?nocache=' + Date.now() },
+    res => {
+      let b = '';
+      res.on('data', c => b += c);
+      res.on('end', () => {
+        if (b.trim() !== local.trim()) {
+          console.error('✗ 服务端返回的 ui_test_script.js 与本地文件不一致。');
+          console.error('  常见原因：另有一份同名文件在别处，或 Flask 未重启。');
+          process.exit(2);
+        }
+      });
+    }).on('error', () => {
+      console.error('✗ 无法连接http://127.0.0.1:5000，请先启动 app.py');
+      process.exit(2);
+    });
+})();
+
 // 2) 无头浏览器跑一遍
 const shot = path.join(OUT, 'ui_test.png');
-const profile = path.join(process.env.TEMP || '.', 'edge_ui_test');
+// 【为什么 profile 每次都换新目录】
+// ui_test_script.js 会被浏览器缓存。若复用同一个 user-data-dir，
+// 改了测试脚本再跑，拿到的仍是旧脚本的 23 条结果，
+// 看起来"测试通过"其实新加的用例根本没执行——极具欺骗性。
+// 所以每次跑用带时间戳的全新 profile，强制重新拉脚本。
+const stamp = Date.now().toString(36);
+const profile = path.join(process.env.TEMP || '.', 'edge_ui_test_' + stamp);
+const NO_CACHE = [
+  '--disable-application-cache',
+  '--disk-cache-size=1',
+  '--media-cache-size=1',
+  '--incognito',
+];
 try {
   execFileSync(EDGE, [
     '--headless=new',
@@ -59,6 +98,7 @@ try {
     '--window-size=1600,1000',
     '--virtual-time-budget=20000',
     '--user-data-dir=' + profile,
+    ...NO_CACHE,
     '--screenshot=' + shot,
     URL,
   ], { stdio: 'pipe', timeout: 90000 });
@@ -76,7 +116,8 @@ try {
     '--disable-gpu',
     '--no-sandbox',
     '--virtual-time-budget=20000',
-    '--user-data-dir=' + profile + '2',
+    '--user-data-dir=' + profile,
+    ...NO_CACHE,
     '--dump-dom',
     URL,
   ], { encoding: 'utf8', timeout: 90000, maxBuffer: 1 << 24 });

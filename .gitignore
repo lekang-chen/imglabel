@@ -55,3 +55,5 @@ canvas/_ui_harness.html
 data/annotations_before_shape_fix/
 data/annotations_*/
 data/train.log
+canvas/_undoharness.html
+canvas/_polyharness.html

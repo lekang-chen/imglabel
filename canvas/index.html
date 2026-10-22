@@ -91,6 +91,12 @@
 
     <div class="toolbar">
       <div class="tool-group">
+        <button class="btn btn-ghost btn-xs" id="btnUndo" disabled
+                title="撤销上一步（Ctrl+Z）">↶ 撤销</button>
+        <button class="btn btn-ghost btn-xs" id="btnRedo" disabled
+                title="没有可重做的操作（Ctrl+Shift+Z）">↷ 重做</button>
+      </div>
+      <div class="tool-group">
         <span class="tool-label">工具</span>
         <button class="tool-btn" data-tool="select" title="选择 / 移动对象：点击对象选中，选中后按 Delete 删除">选择</button>
         <button class="tool-btn" data-tool="polygon" title="多边形描轮廓：逐个点击物体轮廓上的点，围完一圈后双击（或按 Enter）闭合；右键撤回上一个点">多边形</button>
@@ -101,6 +107,8 @@
         <span class="tool-hint">
           逐点点击轮廓 → <b>双击</b>或 <b>Enter</b> 闭合 · <b>右键</b>撤回上一点
         </span>
+        <button class="btn btn-ghost btn-xs" id="btnUndoPt"
+                title="撤回上一个点（快捷键退格）">← 撤回一点</button>
         <button class="btn btn-ghost btn-xs" id="btnFinishPoly">完成描边</button>
         <button class="btn btn-ghost btn-xs" id="btnCancelPoly2">放弃</button>
       </div>

@@ -7,6 +7,15 @@
      T4  选中对象用轮廓描边，不画矩形外框
      T5  画笔：位图掩码涂抹后，多边形真的变了且凹角没被填平
      T6  橡皮：能擦掉一块
+     T7  撤销「新增对象」，且重做能恢复（按 id 判定）
+     T8  撤销「删除对象」，对象连同原id 和位置一起回来
+     T9  撤销「改类别」
+     T10 撤销「画笔改形状」，多边形逐点还原
+     T11 撤销栈上限 50；新操作清空重做分支
+
+   【这个文件必须放在 canvas/ 下】
+   Flask 的static_folder 指向 canvas/，app.js 在 ?uitest=1 时
+   从 /static/ui_test_script.js 加载本页。放在tools/ 下不会被执行。
 */
 (function () {
   'use strict';
@@ -205,7 +214,16 @@
     const eraseBtn = d.querySelector('.tool-btn[data-tool="erase"]');
     eraseBtn.click();
     ok('橡皮工具已激活', S.tool === 'erase');
-    pt = toClient(0.3, 0.5);   // 左边缘
+    // 【为什么这里要取顶点中点而不是写死 0.3, 0.5】
+    // 橡皮擦的是掩码，而掩码按deep 的多边形填充。
+    // 写死一个坐标，一旦那个点恰好落在形状外，擦的就是空气，
+    // 面积不变 -> 误判成"橡皮坏了"。
+    // 取最靠左顶点的邻边中点，保证落在形状内部。
+    let minX = 1, li = 0;
+    deep.polygon.forEach((p, i) => { if (p[0] < minX) { minX = p[0]; li = i; } });
+    const nb = deep.polygon[(li + 1) % deep.polygon.length];
+    const ex = (minX + nb[0]) / 2, ey = (deep.polygon[li][1] + nb[1]) / 2;
+    pt = toClient(ex, ey);   // 靠左的边中点
     fire(w, d, cv, 'mousedown', { clientX: pt.x, clientY: pt.y, button: 0 });
     for (let i = 0; i <= 8; i++) {
       pt = toClient(0.3, 0.5 + i * 0.02);
@@ -214,8 +232,108 @@
     fire(w, d, cv, 'mouseup', { clientX: pt.x, clientY: pt.y, button: 0 });
     await new Promise(r => setTimeout(r, 300));
     const areaErased = polyArea(deep.polygon);
-    ok('橡皮擦掉了面积', areaErased < areaPre * 0.95,
-       areaPre.toFixed(4) + ' -> ' + areaErased.toFixed(4));
+    // 阈值取2% 而不是 5%：擦的是一条窄边，
+    // 窄边占整体面积本来就小，5% 会把「擦掉了」误判成「没擦掉」。
+    // 这里的目的是确认橡皮真的改动了形状，不是量擦了多少。
+    ok('橡皮擦掉了面积', areaErased < areaPre * 0.98,
+       areaPre.toFixed(4) + ' -> ' + areaErased.toFixed(4)
+       + ' (' + ((1 - areaErased / areaPre) * 100).toFixed(1) + '%)');
+
+    // ---------- 撤销栈基线 ----------
+    // 前面 T5/T6 已经改过 deep 的形状，先把栈清干净，
+    // 让下面每项断言的「几步」数目确定。
+    S.undoStack.length = 0; S.redoStack.length = 0;
+
+    // ---------- T7 撤销「新增对象」 ----------
+    const nPre = S.anno.objects.length;
+    A.addObject('chair', [[0.1, 0.1], [0.3, 0.1], [0.3, 0.3], [0.1, 0.3]], 'human');
+    const nAdd = S.anno.objects.length;
+    ok('新增了一个对象', nAdd === nPre + 1, nPre + ' -> ' + nAdd);
+    ok('新增后撤销栈有 1 步', S.undoStack.length === 1, S.undoStack.length + ' 步');
+    const addedId = S.anno.objects[S.anno.objects.length - 1].id;
+    A.undo();
+    ok('撤销后对象数还原', S.anno.objects.length === nPre,
+       S.anno.objects.length + ' vs ' + nPre);
+    ok('撤销后新增的对象消失了（按 id 判定）',
+       !S.anno.objects.some(o => o.id === addedId));
+    ok('撤销后栈空、重做栈有 1 步',
+       S.undoStack.length === 0 && S.redoStack.length === 1,
+       S.undoStack.length + '/' + S.redoStack.length);
+    A.redo();
+    ok('重做后对象又回来了（id 一致）',
+       S.anno.objects.some(o => o.id === addedId));
+    A.undo();   // 回到基线
+
+    // ---------- T8 撤销「删除对象」 ----------
+    const victim = S.anno.objects[0];
+    S.selectedId = victim.id;
+    A.deleteSelected();
+    ok('删除后少了一个对象', !S.anno.objects.some(o => o.id === victim.id));
+    A.undo();
+    const back = S.anno.objects.find(o => o.id === victim.id);
+    ok('撤销删除后对象回来了', !!back);
+    // 关键：删除时对象 id 从列表消失，撤销必须原样恢复同一个 id，
+    // 否则「选中它改类别」这类后续操作会对不上号。
+    // 【注意不能用引用比较 back === victim】
+    // 快照是 JSON 深拷贝，恢复出来的必然是新对象，
+    // 引用比较恒为 false，那是测试写错而不是功能坏了。
+    ok('恢复的是同一个 id，且回到原位置',
+       !!back && back.id === victim.id
+       && S.anno.objects[0].id === victim.id
+       && JSON.stringify(back.polygon) === JSON.stringify(victim.polygon),
+       back ? back.id + ' vs ' + victim.id : '未恢复');
+
+    // ---------- T9 撤销「改类别」 ----------
+    const t9obj = S.anno.objects[0];
+    S.selectedId = t9obj.id;
+    const clsPre = t9obj.class;
+    const clsNext = S.classes.find(c => c.name !== clsPre).name;
+    A.changeClass(clsNext);
+    ok('类别已改', S.anno.objects[0].class === clsNext, clsNext);
+    A.undo();
+    ok('撤销后类别还原', S.anno.objects[0].class === clsPre, S.anno.objects[0].class);
+
+    // ---------- T10 撤销「修改多边形形状」 ----------
+    // 走真实路径：buildBrushMask -> commitBrush，改完后撤销应回到原形状。
+    const t10 = S.anno.objects[0];
+    S.selectedId = t10.id;
+    const polyPre = JSON.stringify(t10.polygon);
+    const nPtsPre = t10.polygon.length;
+    A.buildBrushMask(t10);
+    // 用一次「全选填充」代替手工涂抹：直接铺满掩码，
+    // commitBrush 会把它转成一个新的多边形，形状必然改变。
+    const m = S.brushMask;
+    ok('画笔掩码已建立', !!m);
+    if (m) {
+      const im = m.ctx.createImageData(m.w, m.h);
+      for (let i = 0; i < im.data.length; i += 4) {
+        im.data[i] = 255; im.data[i + 3] = 255;
+      }
+      m.ctx.putImageData(im, 0, 0);
+      S.paintTarget = t10.id;
+      A.commitBrush();
+      ok('commitBrush 改变了形状',
+         JSON.stringify(S.anno.objects[0].polygon) !== polyPre,
+         nPtsPre + ' -> ' + S.anno.objects[0].polygon.length + ' 个点');
+      A.undo();
+      ok('撤销画笔后形状逐点还原',
+         JSON.stringify(S.anno.objects[0].polygon) === polyPre,
+         S.anno.objects[0].polygon.length + ' 个点');
+      ok('撤销后选中对象仍然存在',
+         S.anno.objects.some(o => o.id === t10.id));
+    }
+
+    // ---------- T11 栈上限 / 新操作清空重做分支 ----------
+    S.undoStack.length = 0; S.redoStack.length = 0;
+    for (let i = 0; i < S.undoLimit + 12; i++) A.pushUndo();
+    ok('撤销栈不超过上限 ' + S.undoLimit,
+       S.undoStack.length === S.undoLimit, S.undoStack.length + ' 步');
+    A.redo();                 // 先造一个重做分支
+    const redoBefore = S.redoStack.length;
+    A.pushUndo();
+    ok('新操作清空重做分支', S.redoStack.length === 0,
+       redoBefore + ' -> ' + S.redoStack.length);
+    S.undoStack.length = 0; S.redoStack.length = 0;
 
     // ---------- 汇总 ----------
     log.unshift('结果：' + pass + ' 通过 / ' + fail + ' 失败\n');

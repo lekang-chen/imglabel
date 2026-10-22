@@ -41,7 +41,93 @@ const S = {
   dirty: false,           // 有未保存修改
   edits: [],              // 本图的修正记录
   origById: {},           // 初始状态快照，用于判断哪里被改了
+  undoStack: [],          // 撤销栈：每次改标注前的标注快照
+  redoStack: [],          // 重做栈
+  undoLimit: 50,          // 栈上限，防止长时间标注吃掉内存
 };
+
+/**
+ * 撤销 / 重做。
+ *
+ * 【为什么用「整图快照」而不是逐操作反向函数】
+ * 标注操作有好几种（新增、删除、改类别、画笔改形状、多边形重描），
+ * 每种写一个反向函数要处理「对象是否还存在」「顺序怎么恢复」等边界，
+ * 很容易漏。而且新增对象时对象 id 是随机的，反向函数没法凭空造回来。
+ * 直接快照整份 anno（深拷贝）最稳：撤销就是把整份状态换回去。
+ *
+ * 一张图的标注通常几十个对象、多边形顶点上百，JSON 快照约几十 KB，
+ * 50 步上限也就一两 MB，可以接受。
+ */
+
+/** 深拷贝一份标注状态（要连数组一起复制，否则改回��会互相影响） */
+function snapshotAnno() {
+  return JSON.parse(JSON.stringify({
+    objects: S.anno ? S.anno.objects : [],
+    selectedId: S.selectedId,
+    edits: S.edits,
+  }));
+}
+
+/** 记录一次可撤销的操作（在真正改状态之前调用） */
+function pushUndo() {
+  S.undoStack.push(snapshotAnno());
+  if (S.undoStack.length > S.undoLimit) S.undoStack.shift();
+  // 新操作后清空重做栈——这是所有编辑器的通用行为：
+  // 撤销回去之后再做新操作，原来那条「重做」分支就作废了
+  S.redoStack.length = 0;
+  updateUndoBtns();
+}
+
+/** 撤销一步 */
+function undo() {
+  if (!S.undoStack.length) { toast('没有可撤销的操作'); return; }
+  const snap = S.undoStack.pop();
+  S.redoStack.push(snapshotAnno());
+  applySnapshot(snap);
+  toast('已撤销');
+}
+
+/** 重做一步 */
+function redo() {
+  if (!S.redoStack.length) { toast('没有可重做的操作'); return; }
+  const snap = S.redoStack.pop();
+  S.undoStack.push(snapshotAnno());
+  applySnapshot(snap);
+  toast('已重做');
+}
+
+/** 把快照恢复成当前状态 */
+function applySnapshot(snap) {
+  S.anno.objects = snap.objects;
+  S.selectedId = snap.selectedId;
+  S.edits = snap.edits;
+  // 画笔/多边形的临时状态必须一起清掉，否则撤销后会残留半截草稿
+  S.brushMask = null;
+  S.drawing = false;
+  S.draftPts = [];
+  syncPolyHint();
+  // 焦点可能落在已删除的对象上，选中列表里要能重新找到
+  if (S.selectedId && !S.anno.objects.some(o => o.id === S.selectedId)) {
+    S.selectedId = null;
+  }
+  S.dirty = true;
+  renderObjects(); renderProps(); renderEditLog(); draw();
+  updateUndoBtns();
+  saveSoon();
+}
+
+/** 撤销/重做按钮的可用状态 */
+function updateUndoBtns() {
+  const u = $('btnUndo'), r = $('btnRedo');
+  if (u) u.disabled = !S.undoStack.length;
+  if (r) r.disabled = !S.redoStack.length;
+  if (u) u.title = S.undoStack.length
+    ? `撤销上一步（Ctrl+Z），还可撤销 ${S.undoStack.length} 步`
+    : '没有可撤销的操作（Ctrl+Z）';
+  if (r) r.title = S.redoStack.length
+    ? `重做（Ctrl+Shift+Z），还可重做 ${S.redoStack.length} 步`
+    : '没有可重做的操作（Ctrl+Shift+Z）';
+}
 
 // ---------------------------------------------------------------- 工具
 const $ = (id) => document.getElementById(id);
@@ -145,6 +231,11 @@ async function selectImage(name) {
   S.focusMode = true;
   S.hoverId = null;
   S.brushMask = null;
+  // 撤销栈是「当前这张图」的历史，换图必须清空，
+  // 否则 Ctrl+Z 会把上一张图的对象恢复出来
+  S.undoStack = [];
+  S.redoStack = [];
+  updateUndoBtns();
   syncFocusBtn();
 
   $('emptyHint').classList.add('hidden');
@@ -416,6 +507,7 @@ function markEdited(objId) {
 }
 
 function addObject(cls, poly, source) {
+  pushUndo();// 撤销点：新增之前的整图状态
   const obj = {
     id: 'o' + Math.random().toString(36).slice(2, 10),
     class: cls, polygon: poly, source: source || 'human', edited: true,
@@ -434,6 +526,7 @@ function deleteSelected() {
   const idx = S.anno.objects.findIndex(o => o.id === S.selectedId);
   if (idx < 0) return;
   const o = S.anno.objects[idx];
+  pushUndo();              // 撤销点：删除之前的整图状态（对象还能拿回来）
   S.anno.objects.splice(idx, 1);
   S.edits.push({ object_id: o.id, class: o.class, type: '删除' });
   S.selectedId = null;
@@ -446,6 +539,7 @@ function changeClass(newCls) {
   if (!S.selectedId) return;
   const o = S.anno.objects.find(x => x.id === S.selectedId);
   if (!o || o.class === newCls) return;
+  pushUndo();              // 撤销点：改类别之前
   o.class = newCls;
   markEdited(o.id);
   S.edits[S.edits.length - 1].type = '类别';
@@ -562,7 +656,7 @@ function syncPolyHint() {
   tip.classList.remove('hidden');
   tip.textContent = n < 3
     ? `已点 ${n} 个点 · 继续沿物体轮廓点击（至少 3 点），然后双击或按 Enter 闭合`
-    : `已点 ${n} 个点 · 双击或按「完成描边」按钮闭合，右键撤回上一点`;
+    : `已点 ${n} 个点 · 双击或按「完成描边」闭合；点歪了用「撤回一点」或画布右键`;
 }
 
 function renderProps() {
@@ -712,6 +806,19 @@ function bindEvents() {
   };
   $('btnCancelPoly2').onclick = () => {
     S.drawing = false; S.draftPts = [];
+    syncPolyHint(); draw();
+  };
+
+  // 撤销 / 重做
+  $('btnUndo').onclick = undo;
+  $('btnRedo').onclick = redo;
+  updateUndoBtns();
+
+  // 描边过程中的「撤回一点」——等价于在画布上右键，
+  // 但按钮更显眼，小目标点歪了不用每次都去画布上找右键。
+  $('btnUndoPt').onclick = () => {
+    if (!S.drawing || !S.draftPts.length) { toast('还没有点过任何点', true); return; }
+    S.draftPts.pop();
     syncPolyHint(); draw();
   };
 
@@ -894,6 +1001,9 @@ function commitBrush() {
     return;
   }
 
+  // 撤销点：涂抹之前的整图状态。
+  // 必须放在写回 polygon 之前，快照里存的才是涂抹前的形状。
+  pushUndo();
   o.polygon = poly;
   o.edited = true;
   S.dirty = true;
@@ -1157,6 +1267,15 @@ function showModal(title, html) {
 document.addEventListener('keydown', e => {
   if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT') return;
   if (e.key === 'Delete' || e.key === 'Backspace') { deleteSelected(); }
+  // 撤销 / 重做。
+  // 用e.key.toLowerCase 兼容 Caps Lock；但 Ctrl+Y 也是重做的通用键。
+  if ((e.ctrlKey || e.metaKey) && !e.shiftKey) {
+    const k = e.key.toLowerCase();
+    if (k === 'z') { e.preventDefault(); undo(); return; }
+    if (k === 'y') { e.preventDefault(); redo(); return; }
+  }
+  if ((e.ctrlKey || e.metaKey) && e.shiftKey &&
+      e.key.toLowerCase() === 'z') { e.preventDefault(); redo(); return; }
   if (e.key === 'Escape') { S.drawing = false; S.draftPts = []; syncPolyHint(); draw(); }
   if (e.key === 'Enter' && S.drawing) { finishPolygon(); }
 });
@@ -1169,6 +1288,9 @@ window.__APP__ = {
   get S() { return S; },
   draw, buildBrushMask, visibleObjects, isVisible, toCanvas, toNorm,
   renderObjects, selectImage, hitTest, commitBrush,
+  // 撤销栈：自动化测试要直接触发并检查栈深，所以一并导出。
+  undo, redo, pushUndo, addObject, deleteSelected, changeClass,
+  snapshot: snapshotAnno, applySnapshot,
 };
 
 // 自动化测试脚本（仅在带 ?uitest=1 时按需加载）
@@ -1177,7 +1299,7 @@ if (location.search.includes('uitest=1')) {
   // 如果让它写进真实标注文件，就会污染项目数据。
   window.__UITEST__ = true;
   const s = document.createElement('script');
-  s.src = '/static/ui_test_script.js';
+  s.src = '/static/ui_test_script.js?t=' + Date.now();
   document.body.appendChild(s);
   // 演示截图脚本：拍交互态（聚焦模式、筛选效果）时用。
   // 这个文件由 tools/shoot_demo.py 在截图前临时生成，不进版本库，

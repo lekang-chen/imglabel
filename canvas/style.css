@@ -190,8 +190,21 @@ body {
   height: 44px; flex: 0 0 44px;
   background: var(--panel); border-top: 1px solid var(--line);
   display: flex; align-items: center; gap: 20px; padding: 0 14px;
+  /* 【为什么要 overflow + min-width:0】
+     工具栏是单行 flex，两侧还有固定宽度的左右面板。
+     窗口不够宽时内容会溢出：加了一组撤销按钮后总宽超了容器，
+     浏览器把溢出内容挤到左侧容器外，最左边的按钮直接看不见。
+     这里允许横向滚动，并让各组可以收缩，避免按钮被裁掉。 */
+  overflow-x: auto; overflow-y: hidden;
 }
-.tool-group { display: flex; align-items: center; gap: 5px; }
+/* 滚动条压扁，不占视觉高度 */
+.toolbar::-webkit-scrollbar { height: 3px; }
+.toolbar::-webkit-scrollbar-thumb { background: var(--line); border-radius: 2px; }
+
+.tool-group {
+  display: flex; align-items: center; gap: 5px;
+  flex: 0 0 auto;            /* 组本身不压缩，保证按钮完整可点 */
+}
 .tool-label { font-size: 11px; color: var(--text-3); margin-right: 3px; }
 
 /* 多边形描边时的常驻提示条。
