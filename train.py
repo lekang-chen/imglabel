@@ -87,13 +87,61 @@ def refuse_if_not_exported():
     if n_images == 0:
         sys.exit("[错误] 训练集里没有图片，请重新导出。")
 
-    # --- 把 data.yaml 里的 path 改成本机实际路径 ---
-    # 导出时写进去的是导出那一刻的绝对路径。如果评委把提交包解压到别的目录，
-    # 那个路径就失效了，ultralytics 会报"找不到数据集"。
-    # 所以每次训练前都按当前脚本位置重写一遍，保证换机器也能跑。
-    _rewrite_data_yaml_path()
+    # --- 生成一份「带本机绝对路径」的训练用 yaml ---
+    # 【为什么不再直接改写 dataset/data.yaml】
+    # 原来是把 data.yaml 的 path 原地改成绝对路径，训练完再还原。
+    # 但这有个隐患：训练过程中如果用户在界面上点了「导出数据集」，
+    # exporter 会重写 data.yaml（path 变回 "."），而 ultralytics 在
+    # 训练收尾做最终验证时会重新读这份 yaml，于是 path 按当前工作目录
+    # 解析成 D:/imglabel/images/val（不存在）——
+    # 实测就报过：Dataset images not found, missing path 'D:\imglabel\images\val'，
+    # 51 轮白训，best.pt 也不会被拷到 model/。
+    #
+    # 改成训练专用的一份临时 yaml：导出怎么改 data.yaml 都影响不到训练。
+    # 数据集配置必须跟着机器走，同时又不该被别的操作干扰。
+    _write_train_yaml()
 
     return n_images
+
+
+TRAIN_YAML = os.path.join(DATASET_DIR, "_train.yaml")
+
+
+def _write_train_yaml():
+    """生成训练专用 yaml（path 指向本机绝对路径），返回文件路径。
+
+    与 dataset/data.yaml 的区别：那份的 path 刻意保持 "."（可移植，进提交包），
+    这一份只在本机训练时用，跑完即删，不进版本库。
+    """
+    try:
+        with open(DATA_YAML, encoding="utf-8") as f:
+            lines = f.read().splitlines()
+    except OSError:
+        lines = ["nc: 10", "names:", "  0: person"]
+
+    new_path = DATASET_DIR.replace("\\", "/")
+    out, replaced = [], False
+    for ln in lines:
+        if ln.strip().startswith("path:"):
+            out.append("path: %s" % new_path)
+            replaced = True
+        else:
+            out.append(ln)
+    if not replaced:
+        out.insert(0, "path: %s" % new_path)
+
+    with open(TRAIN_YAML, "w", encoding="utf-8") as f:
+        f.write("\n".join(out) + "\n")
+    return TRAIN_YAML
+
+
+def _cleanup_train_yaml():
+    """删掉训练用的临时 yaml，避免混进提交包。"""
+    try:
+        if os.path.exists(TRAIN_YAML):
+            os.remove(TRAIN_YAML)
+    except OSError:
+        pass
 
 
 def _rewrite_data_yaml_path():
@@ -310,7 +358,7 @@ def main():
     t0 = time.time()
     try:
         model.train(
-            data=DATA_YAML,
+            data=TRAIN_YAML,
             epochs=cfg["epochs"],
             imgsz=cfg["imgsz"],
             batch=cfg["batch"],
@@ -330,8 +378,8 @@ def main():
         )
     except Exception as exc:  # noqa: BLE001
         print("[错误] 训练失败: %s" % exc)
-        # 失败了也要还原 data.yaml，否则提交包里的配置是本机绝对路径
-        restore_data_yaml_path()
+        # 失败也要清掉临时 yaml，别留垃圾
+        _cleanup_train_yaml()
         sys.exit(1)
 
     # --- 第四步：把最佳权重拷到 model/ ---
@@ -344,6 +392,7 @@ def main():
                 cands.append(os.path.join(root, "best.pt"))
         if not cands:
             print("[错误] 训练结束但没找到 best.pt")
+            _cleanup_train_yaml()
             sys.exit(1)
         src = max(cands, key=os.path.getmtime)
 
@@ -354,7 +403,9 @@ def main():
     print("[4/4] 训练完成，耗时 %.1f 分钟" % (elapsed / 60))
     print("        最佳权重已保存: %s" % dst)
 
-    # 还原 data.yaml 的 path 为相对路径。
+    _cleanup_train_yaml()
+
+    # 还原 data.yaml 的 path 为相对路径（历史流程留下的兜底，正常已不会被改）。
     # 训练时改成绝对路径是为了让 ultralytics 找到数据，
     # 但提交包里的 data.yaml 必须可移植——评委解压到任何目录都能直接训练。
     restore_data_yaml_path()

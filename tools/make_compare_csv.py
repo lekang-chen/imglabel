@@ -43,9 +43,29 @@ def read_best_map():
     box_map = mask_map = None
     source = "未获取"
 
-    # 优先从训练日志里解析 best.pt 的验证结果
+    # 【最高优先级：data/best_metrics.json】
+    # 这份文件由 tools/eval_best.py 生成，是「拿当前最新标签测 best.pt」的结果，
+    # 并附带测量时的数据状态（修正条数、验证集张数）。
+    # 为什么它比 train.log 更可信：train.log 里那句是训练刚结束那一刻打的，
+    # 之后人工修正还会改标签（本项目实测从 1 条改到 60 条），
+    # 再测同一份权重的 mAP 就会变（0.742/0.415 -> 0.718/0.442）。
+    # 文档里报的数字必须是「评委照现在的仓库复现能得到的」，所以以这份为准。
+    metrics_path = os.path.join(BASE_DIR, "data", "best_metrics.json")
+    if os.path.exists(metrics_path):
+        try:
+            with open(metrics_path, encoding="utf-8") as f:
+                m = json.load(f)
+            box_map = float(m["box_map50"])
+            mask_map = float(m["mask_map50"])
+            source = ("best.pt 在最终修正标签上实测"
+                      "（%s，%d 条修正）"
+                      % (m.get("measured_at", ""), m.get("dataset_edited", 0)))
+        except Exception:  # noqa: BLE001
+            pass
+
+    # 其次从训练日志里解析 best.pt 的验证结果
     log_path = os.path.join(BASE_DIR, "data", "train.log")
-    if os.path.exists(log_path):
+    if box_map is None and os.path.exists(log_path):
         try:
             import re
             with open(log_path, "r", encoding="utf-8", errors="ignore") as f:

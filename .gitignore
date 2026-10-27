@@ -67,3 +67,7 @@ data/annotations_*/
 data/train.log
 canvas/_undoharness.html
 canvas/_polyharness.html
+
+# 训练/评估用的临时 yaml（path 为绝对路径，不入库）
+dataset/_train.yaml
+dataset/_eval.yaml
