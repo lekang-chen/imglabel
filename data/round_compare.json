@@ -1,0 +1,110 @@
+{
+  "r1": {
+    "files": 150,
+    "total_objects": 898,
+    "need_fix": 527,
+    "fix_rate": 0.5869,
+    "tp": 371,
+    "fp": 527,
+    "fn": 247,
+    "precision": 0.4131,
+    "recall": 0.6003,
+    "dup_pairs": 0,
+    "per_class": {
+      "dining table": {
+        "total": 102,
+        "need_fix": 67
+      },
+      "chair": {
+        "total": 115,
+        "need_fix": 66
+      },
+      "cup": {
+        "total": 162,
+        "need_fix": 89
+      },
+      "couch": {
+        "total": 34,
+        "need_fix": 20
+      },
+      "tv": {
+        "total": 32,
+        "need_fix": 14
+      },
+      "person": {
+        "total": 186,
+        "need_fix": 109
+      },
+      "bottle": {
+        "total": 99,
+        "need_fix": 57
+      },
+      "book": {
+        "total": 96,
+        "need_fix": 69
+      },
+      "potted plant": {
+        "total": 44,
+        "need_fix": 23
+      },
+      "laptop": {
+        "total": 28,
+        "need_fix": 13
+      }
+    }
+  },
+  "r2": {
+    "files": 150,
+    "total_objects": 627,
+    "need_fix": 319,
+    "fix_rate": 0.5088,
+    "tp": 308,
+    "fp": 319,
+    "fn": 310,
+    "precision": 0.4912,
+    "recall": 0.4984,
+    "dup_pairs": 0,
+    "per_class": {
+      "dining table": {
+        "total": 85,
+        "need_fix": 54
+      },
+      "chair": {
+        "total": 89,
+        "need_fix": 53
+      },
+      "cup": {
+        "total": 113,
+        "need_fix": 55
+      },
+      "tv": {
+        "total": 22,
+        "need_fix": 6
+      },
+      "person": {
+        "total": 100,
+        "need_fix": 38
+      },
+      "book": {
+        "total": 75,
+        "need_fix": 51
+      },
+      "couch": {
+        "total": 16,
+        "need_fix": 2
+      },
+      "laptop": {
+        "total": 20,
+        "need_fix": 6
+      },
+      "bottle": {
+        "total": 81,
+        "need_fix": 42
+      },
+      "potted plant": {
+        "total": 26,
+        "need_fix": 12
+      }
+    }
+  }
+}

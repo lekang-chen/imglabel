@@ -2,6 +2,17 @@
 
 室内场景图像标注迭代工具 —— 预标注 → 人工审核修正 → 导出数据集 → 模型训练 → 回标，形成完整迭代闭环。
 
+> **仓库已自带完整数据**：`data/images/` 150 张图 + `data/annotations/` 150 个标注 JSON
+> （含已完成的 60 条人工修正），clone 后直接启动即可看到全部内容，无需另外准备数据。
+>
+> | 想核验什么 | 看哪里 |
+> |---|---|
+> | 60 条人工修正是否真实 | `records/修正记录.csv`（每行含图片名 + 对象 ID，可在界面逐条指认） |
+> | 两轮迭代效果对比 | `records/对比结果.csv`（修正率 58.7% → 50.9%，掩码 mAP 0.415） |
+> | 系统能力 | 启动后界面右上角显示 已审核 150/150、修正 60/60 |
+> | 提交物清单与实测数据 | `提交信息.txt` |
+> | AI 使用过程 | `ai_log.md`（按轮次记录，含踩坑与决策依据） |
+
 ## 快速开始
 
 ```bash
@@ -10,18 +21,17 @@ python -m venv .venv
 .venv\Scripts\activate
 pip install -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
 
-# 2. 放入图片
-#    把 150 张室内场景图片（JPG，长边 ≤960）放到 data/images/
-#    （仓库已附带 data/data_source.txt，可用 tools/prepare_data.py 重新生成）
-
-# 3. 启动
+# 2. 启动（图片与标注已在仓库内，无需额外准备）
 python app.py
 ```
 
 浏览器会自动打开 `http://127.0.0.1:5000`。Windows 下也可直接双击 `启动.bat`。
 
-桌面已放置快捷启动器 `人机协同图像标注系统.bat`（位于桌面），双击等价于运行 `start.bat`。
-如需重建：`python tools/make_shortcut.py`（自动识别 OneDrive 重定向后的桌面路径）。
+> 预标注功能需要 `yolov8s-world.pt` / `yolo26n-seg.pt`（约 40 MB，未纳入仓库），
+> 首次点「预标注」时由 ultralytics 自动下载（内置多源回退）；
+> **仅浏览界面、审核与修正标注不需要联网**。
+>
+> 桌面快捷方式 `人机协同图像标注系统.bat` 由 `python tools/make_shortcut.py` 生成。
 
 ## 核心设计
 

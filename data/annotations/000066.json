@@ -1,0 +1,31 @@
+{
+ "image": "000066.jpg",
+ "width": 640,
+ "height": 480,
+ "objects": [
+  {
+   "id": "6b4d5d6b",
+   "class": "dining table",
+   "polygon": [
+    [
+     0.0,
+     0.0
+    ],
+    [
+     1.0,
+     0.0
+    ],
+    [
+     1.0,
+     1.0
+    ],
+    [
+     0.0,
+     1.0
+    ]
+   ],
+   "source": "model",
+   "edited": false
+  }
+ ]
+}

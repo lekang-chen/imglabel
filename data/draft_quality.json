@@ -1,0 +1,86 @@
+{
+  "files": 150,
+  "total_draft": 900,
+  "total_truth": 618,
+  "tp": 371,
+  "fp": 529,
+  "fn": 247,
+  "precision": 0.4122,
+  "recall": 0.6003,
+  "f1": 0.4888,
+  "dup_pairs": 0,
+  "max_poly_points": 175,
+  "over_limit_objects": 0,
+  "per_class": {
+    "book": {
+      "tp": 27,
+      "fp": 69,
+      "fn": 72,
+      "draft": 96,
+      "truth": 99
+    },
+    "bottle": {
+      "tp": 42,
+      "fp": 57,
+      "fn": 23,
+      "draft": 99,
+      "truth": 65
+    },
+    "chair": {
+      "tp": 49,
+      "fp": 67,
+      "fn": 34,
+      "draft": 116,
+      "truth": 83
+    },
+    "couch": {
+      "tp": 14,
+      "fp": 21,
+      "fn": 5,
+      "draft": 35,
+      "truth": 19
+    },
+    "cup": {
+      "tp": 73,
+      "fp": 89,
+      "fn": 27,
+      "draft": 162,
+      "truth": 100
+    },
+    "dining table": {
+      "tp": 35,
+      "fp": 67,
+      "fn": 31,
+      "draft": 102,
+      "truth": 66
+    },
+    "laptop": {
+      "tp": 15,
+      "fp": 13,
+      "fn": 6,
+      "draft": 28,
+      "truth": 21
+    },
+    "person": {
+      "tp": 77,
+      "fp": 109,
+      "fn": 18,
+      "draft": 186,
+      "truth": 95
+    },
+    "potted plant": {
+      "tp": 21,
+      "fp": 23,
+      "fn": 29,
+      "draft": 44,
+      "truth": 50
+    },
+    "tv": {
+      "tp": 18,
+      "fp": 14,
+      "fn": 2,
+      "draft": 32,
+      "truth": 20
+    }
+  }
+}
