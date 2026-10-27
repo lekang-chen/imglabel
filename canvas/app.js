@@ -18,6 +18,7 @@ const S = {
   classes: [],            // [{name, id, color}]
   colorMap: {},           // 类别名 -> hex
   images: [],             // 图片列表
+  lastTrash: null,        // 最近一次删除的批次 {stamp, count}，用于「恢复」提示条
   current: null,          // 当前图片名
   anno: null,             // 当前标注 {image,width,height,objects:[]}
   mode: 'seg',            // seg | det | sem
@@ -188,12 +189,23 @@ async function init() {
 async function loadImages() {
   const d = await api('/api/images');
   S.images = d.images;
+  S.lastTrash = d.last_trash || null;
   $('imgCount').textContent = d.total;
   $('statReviewed').textContent = `${d.reviewed} / ${d.total}`;
   $('statEdited').textContent = `${d.edited_total} / 60`;
   renderImageList();
+  renderTrashBar();
   updateEmptyHint();
   await refreshRate();
+}
+
+/** 有删除记录时，在列表上方显示一条可恢复的提示。 */
+function renderTrashBar() {
+  const bar = $('trashBar');
+  if (!bar) return;
+  if (!S.lastTrash || !S.lastTrash.count) { bar.classList.add('hidden'); return; }
+  bar.classList.remove('hidden');
+  $('trashText').textContent = `已删除 ${S.lastTrash.count} 张`;
 }
 
 /**
@@ -233,11 +245,135 @@ function renderImageList() {
     if (it.reviewed) div.classList.add('done');
     else if (it.total > 0) div.classList.add('pending');
     if (it.name === S.current) div.classList.add('active');
-    div.innerHTML = `<span class="img-name">${it.name}</span>` +
-      `<span class="img-badge">${it.reviewed ? (it.edited ? '改' + it.edited : '已审') : (it.total ? '待审' : '—')}</span>`;
+
+    // 文件名可能是用户上传的任意文字，统一用 textContent，不拼 innerHTML
+    const nm = document.createElement('span');
+    nm.className = 'img-name';
+    nm.textContent = it.name;
+    nm.title = it.name;
+
+    const badge = document.createElement('span');
+    badge.className = 'img-badge';
+    badge.textContent = it.reviewed
+      ? (it.edited ? '改' + it.edited : '已审')
+      : (it.total ? '待审' : '—');
+
+    const del = document.createElement('button');
+    del.type = 'button';
+    del.className = 'img-del';
+    del.textContent = '×';
+    del.title = '删除这张照片（图片与标注移到 data/_trash，可恢复）';
+    // stopPropagation：否则点 × 会顺带触发整行的 selectImage
+    del.onclick = ev => { ev.stopPropagation(); deleteImage(it); };
+
+    div.append(nm, badge, del);
     div.onclick = () => selectImage(it.name);
     box.appendChild(div);
   });
+}
+
+// ---------------------------------------------------------------- 删除照片
+/**
+ * 删除一张照片。
+ *
+ * 【为什么要反复确认】
+ * 后端是软删除（搬到 data/_trash/，可恢复），但用户不会去翻那个目录，
+ * 所以提示里必须写清后果：这张图有几个对象、其中几条是人工改过的。
+ * 尤其是数据集自带的那 150 张——删掉之后提交材料里
+ * 「150 张 / 60 条修正」的口径就对不上了，得单独加重警告。
+ */
+async function deleteImage(it) {
+  const isPreset = /^\d{6}\.\w+$/i.test(it.name);
+
+  let msg = `确定删除「${it.name}」？\n\n`;
+  if (it.total) {
+    msg += `这张图有 ${it.total} 个标注对象`;
+    msg += it.edited ? `，其中 ${it.edited} 条是人工修正过的。\n\n` : '。\n\n';
+  }
+  if (isPreset && it.edited) {
+    msg += '⚠ 这是数据集自带的图片，删除后「150 张 / 60 条修正」\n'
+         + '   的口径就对不上，提交材料里的数字需要重算。\n\n';
+  }
+  if (S.current === it.name && S.dirty) {
+    msg += '当前这张图有未保存的修改，删除会一并丢弃。\n\n';
+  }
+  msg += '图片和标注会一起移到 data/_trash/，可以点「恢复」找回。';
+  if (!confirm(msg)) return;
+
+  const wasCurrent = S.current === it.name;
+  const idx = S.images.findIndex(x => x.name === it.name);
+
+  // 保存是 700ms 防抖的（saveSoon）。删的就是当前这张图时，
+  // 必须先把待执行的保存取消——否则删除请求先到、标注文件被搬走，
+  // 延迟的 saveNow 又把整份标注写回来，留下一个没有图片的孤儿 json。
+  // 顺手把 saveTimer 置空：clearTimeout 只取消定时器、不清变量，
+  // 留着旧 id 会让「还有没有待执行的保存」变得无法判断（也不便测试）。
+  if (wasCurrent) { clearTimeout(saveTimer); saveTimer = null; }
+
+  try {
+    const r = await api('/api/images/delete', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ names: [it.name] }),
+    });
+    if (!r.deleted.length) {
+      toast('删除失败：' + (r.missing.length ? '图片已不存在' : '未知原因'), true);
+      if (S.dirty) saveSoon();   // 没删成，把刚才取消的保存还回去
+      return;
+    }
+    await loadImages();
+    if (wasCurrent) {
+      // 删掉的正是打开着的那张：清空画布并顺位选下一张。
+      // 不自动跳转的话，画布上还挂着已删图片的残影，看着像没删成功。
+      S.dirty = false;
+      clearStage();
+      const next = S.images[Math.min(idx, S.images.length - 1)];
+      if (next) await selectImage(next.name);
+    }
+    toast(`已删除 ${it.name}（可在左侧「恢复」）`);
+  } catch (e) {
+    toast('删除失败: ' + e.message, true);
+    if (S.dirty) saveSoon();
+  }
+}
+
+/** 把画布清空到「没选图」的状态（删掉当前图后用）。 */
+function clearStage() {
+  S.current = null;
+  S.img = null;
+  S.anno = null;
+  S.selectedId = null;
+  S.edits = [];
+  S.draftPts = [];
+  S.drawing = false;
+  S.painting = false;
+  S.brushMask = null;
+  S.hoverId = null;
+  S.undoStack = [];
+  S.redoStack = [];
+  updateUndoBtns();
+  draw();
+  updateEmptyHint();
+}
+
+/** 恢复最近一次删除（含标注与人工修正标记）。 */
+async function restoreImages() {
+  if (!S.lastTrash) return;
+  try {
+    const r = await api('/api/images/restore', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ stamp: S.lastTrash.stamp }),
+    });
+    await loadImages();
+    if (r.restored.length) {
+      const head = r.restored.slice(0, 3).join('、');
+      toast(`已恢复 ${r.restored.length} 张：${head}`
+            + (r.restored.length > 3 ? ' 等' : ''));
+    } else {
+      toast('没有恢复任何文件（可能同名文件已存在）', true);
+    }
+  } catch (e) {
+    toast('恢复失败: ' + e.message, true);
+  }
 }
 
 // ---------------------------------------------------------------- 选图
@@ -736,6 +872,7 @@ function saveSoon() {
 }
 
 async function saveNow() {
+  saveTimer = null;          // 定时器已经触发，"还有待执行的保存"这一状态结束
   if (!S.current || !S.anno) return;
   // 测试模式下不落盘，避免自动化测试污染真实标注数据
   if (window.__UITEST__) { S.dirty = false; return; }
@@ -870,6 +1007,7 @@ function bindEvents() {
   // 用箭头函数包一层：直接挂函数的话，点击事件对象会被当成 opts 传进去
   $('btnPrelabel').onclick = () => startPrelabel();
   $('btnRelabel').onclick = startRelabel;
+  $('btnRestore').onclick = restoreImages;
   $('btnExport').onclick = doExport;
   $('btnTrain').onclick = doTrain;
   $('btnCompare').onclick = showCompare;
@@ -1462,13 +1600,17 @@ init();
 // （顶层 const 不会挂到 window 上，这里显式导出）
 window.__APP__ = {
   get S() { return S; },
+  get saveTimer() { return saveTimer; },
   draw, buildBrushMask, visibleObjects, isVisible, toCanvas, toNorm,
   renderObjects, selectImage, hitTest, commitBrush,
   // 撤销栈：自动化测试要直接触发并检查栈深，所以一并导出。
   undo, redo, pushUndo, addObject, deleteSelected, changeClass,
+  saveSoon, saveNow,
   snapshot: snapshotAnno, applySnapshot,
   // 上传：测试要验证「选完文件后状态机怎么走」，所以把入口导出去
   uploadFiles, pickFiles,
+  // 删除：测试要验证删除后画布是否清空、列表是否同步
+  deleteImage, restoreImages, clearStage, renderImageList, renderTrashBar,
 };
 
 // 自动化测试脚本（仅在带 ?uitest=1 时按需加载）

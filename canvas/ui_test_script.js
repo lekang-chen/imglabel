@@ -13,6 +13,8 @@
      T10 撤销「画笔改形状」，多边形逐点还原
      T11 撤销栈上限 50；新操作清空重做分支
      T12 上传入口：按钮/多选/默认勾选、非图片被拒、拖拽遮罩显隐
+     T13 删除照片：每项都有删除按钮、取消不发请求、请求只带一个名字、
+         删除按钮不误触选中、恢复提示条显隐
 
    【这个文件必须放在 canvas/ 下】
    Flask 的static_folder 指向 canvas/，app.js 在 ?uitest=1 时
@@ -378,6 +380,101 @@
       ok('拖入文件时显示遮罩', !mask.classList.contains('hidden'));
       w.dispatchEvent(ev('dragleave'));
       ok('拖出后遮罩自动隐藏', mask.classList.contains('hidden'));
+    }
+
+    // ---------- T13 删除照片 ----------
+    // 同样只测「接线 + 防御分支」：真删会往 data/_trash 搬文件，
+    // 真删流程由 curl 端到端验证，这里用 confirm 桩和 fetch 桩，
+    // 保证跑完 data/images 一张不少。
+    const imgItems = d.querySelectorAll('.img-item');
+    const dels = d.querySelectorAll('.img-del');
+    ok('每个列表项都有删除按钮', imgItems.length > 0 && dels.length === imgItems.length,
+       imgItems.length + ' 项 / ' + dels.length + ' 按钮');
+    ok('删除按钮提示写明可恢复',
+       dels.length > 0 && /_trash/.test(dels[0].title || ''),
+       dels.length ? dels[0].title : '缺失');
+
+    const realConfirm = w.confirm;
+    const realFetchDel = w.fetch;
+    let confirmAnswer = false;
+    let delCalled = 0;
+    let delBody = null;
+    w.confirm = () => confirmAnswer;
+    w.fetch = function (url, opt) {
+      if (String(url).indexOf('/api/images/delete') >= 0) {
+        delCalled++;
+        delBody = JSON.parse(opt.body);
+        return Promise.resolve(new w.Response(JSON.stringify({
+          ok: true, deleted: delBody.names, missing: [], failed: [],
+          trash: 'data/_trash/stub', total_images: S.images.length,
+        }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+      }
+      return realFetchDel.apply(this, arguments);
+    };
+
+    try {
+      // ① 取消确认：一个请求都不能发
+      const target = S.images.find(x => x.name !== S.current);
+      const curBefore = S.current;
+      confirmAnswer = false;
+      A.deleteImage(target);
+      await new Promise(r => setTimeout(r, 120));
+      ok('取消确认时不发删除请求', delCalled === 0, 'delCalled=' + delCalled);
+      // 点 × 不能顺带把整行选中（stopPropagation 是否生效）
+      ok('点删除按钮不会切换当前图片', S.current === curBefore,
+         curBefore + ' -> ' + S.current);
+
+      // ② 确认删除：请求只带这一个文件名
+      confirmAnswer = true;
+      A.deleteImage(target);
+      await new Promise(r => setTimeout(r, 600));
+      ok('确认后发出删除请求', delCalled === 1, 'delCalled=' + delCalled);
+      ok('请求体只含被删的那一个文件名',
+         !!delBody && Array.isArray(delBody.names)
+         && delBody.names.length === 1 && delBody.names[0] === target.name,
+         delBody ? JSON.stringify(delBody) : 'null');
+
+      // ③ 恢复提示条：没有删除记录时隐藏，有记录时显示张数
+      const bar = d.getElementById('trashBar');
+      S.lastTrash = null;
+      A.renderTrashBar();
+      ok('无删除记录时不显示恢复条', !!bar && bar.classList.contains('hidden'));
+
+      S.lastTrash = { stamp: '20260101_000000', count: 3 };
+      A.renderTrashBar();
+      ok('有删除记录时显示恢复条并标出张数',
+         !!bar && !bar.classList.contains('hidden')
+         && /3/.test(d.getElementById('trashText').textContent),
+         bar ? d.getElementById('trashText').textContent : '缺失');
+
+      // ④ 防抖保存不能把标注「写回来」
+      // saveSoon 是 700ms 防抖。若在窗口内删掉当前图，删除请求会先到
+      // （标注文件被搬走），延迟的 saveNow 再把整份标注写回，
+      // 就留下一个没有图片的孤儿 json。删当前图必须先取消待执行的保存。
+      //
+      // 【怎么观测】测试模式下 saveNow 不落盘（__UITEST__ 直接 return），
+      // 所以数不到请求。改看 saveTimer：saveSoon 会留下 timer id，
+      // 取消后必须为 null。移除修复后这条会 FAIL，验证过有效。
+      const curName = S.current;
+      confirmAnswer = true;
+      S.dirty = true;
+      A.saveSoon();
+      const queued = A.saveTimer !== null;
+      ok('saveSoon 排上了待执行的保存', queued);
+      A.deleteImage(S.images.find(x => x.name === curName));
+      await new Promise(r => setTimeout(r, 400));
+      ok('删除当前图后取消了待执行的保存（不留孤儿标注）',
+         A.saveTimer === null, 'saveTimer=' + A.saveTimer);
+      await new Promise(r => setTimeout(r, 1200));   // 越过防抖窗口再看一次
+      ok('防抖窗口过去也没有补写', A.saveTimer === null,
+         'saveTimer=' + A.saveTimer);
+
+      // 收尾：把状态还原，别影响后面的断言
+      S.lastTrash = null;
+      A.renderTrashBar();
+    } finally {
+      w.confirm = realConfirm;
+      w.fetch = realFetchDel;
     }
 
     // ---------- 汇总 ----------

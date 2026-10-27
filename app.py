@@ -52,6 +52,11 @@ MODEL_DIR = os.path.join(BASE_DIR, "model")
 RECORD_DIR = os.path.join(BASE_DIR, "records")
 WEIGHT_DIR = os.path.join(BASE_DIR, "weights")
 
+# 删除照片时不是 os.remove，而是把「图片 + 标注」成对搬到这里。
+# 【为什么】data/images 里的图连着标注，标注里有 60 条人工修正，
+# 手滑删掉就没了。搬到 _trash/<时间戳>/ 后文件名不变，拷回去即可完整恢复。
+TRASH_DIR = os.path.join(DATA_DIR, "_trash")
+
 for d in (DATA_DIR, IMAGE_DIR, ANNO_DIR, DATASET_DIR, MODEL_DIR, RECORD_DIR):
     os.makedirs(d, exist_ok=True)
 
@@ -281,6 +286,164 @@ def api_upload():
 
 
 # ---------------------------------------------------------------------------
+# 删除：软删除到 data/_trash/，可恢复
+# ---------------------------------------------------------------------------
+
+def _trash_batches():
+    """
+    列出回收站里的批次（时间倒序）。
+
+    每个批次是一个文件夹 data/_trash/<时间戳>/，里面装着这一次删除的
+    「图片 + 对应标注 json」。文件名保持不变，所以恢复只是搬回去。
+    """
+    if not os.path.isdir(TRASH_DIR):
+        return []
+    out = []
+    for name in sorted(os.listdir(TRASH_DIR), reverse=True):
+        d = os.path.join(TRASH_DIR, name)
+        if not os.path.isdir(d):
+            continue
+        files = sorted(f for f in os.listdir(d)
+                       if os.path.isfile(os.path.join(d, f)))
+        if files:
+            out.append({"stamp": name, "files": files})
+    return out
+
+
+def _new_trash_dir():
+    """开一个新的批次目录。同一秒内删两次时自动加 _2、_3，不覆盖上一批。"""
+    base = os.path.join(TRASH_DIR, time.strftime("%Y%m%d_%H%M%S"))
+    path, i = base, 2
+    while os.path.isdir(path) and os.listdir(path):
+        path = "%s_%d" % (base, i)
+        i += 1
+    return path
+
+
+@app.route("/api/images/delete", methods=["POST"])
+def api_delete_images():
+    """
+    删除照片（连同它的标注文件）。
+
+    请求体：{"names": ["a.jpg", "b.png"]}
+
+    【为什么是搬走而不是 os.remove】
+    data/images 里那 150 张图配着标注，标注里有 60 条人工修正，
+    真删了不可逆。所以图片和标注成对搬到 data/_trash/<时间戳>/，
+    文件名不变——误删了点一下「恢复」就能完整拿回来（含修正标记）。
+    """
+    body = request.get_json(silent=True) or {}
+    names = body.get("names")
+    if isinstance(names, str):
+        names = [names]
+    if not isinstance(names, list) or not names:
+        return jsonify({"error": "没有指定要删除的图片"}), 400
+
+    # 只认「当前图片列表里真实存在的名字」。这既是白名单，
+    # 也顺手挡住了 ../../ 这类路径穿越（拼出来的名字不会出现在 existing 里）。
+    existing = set(list_images())
+    trash_dir = _new_trash_dir()
+    created = False
+
+    deleted, missing, failed = [], [], []
+    for raw in names:
+        name = os.path.basename(str(raw))
+        if name not in existing:
+            missing.append(name)
+            continue
+        try:
+            if not created:
+                os.makedirs(trash_dir, exist_ok=True)
+                created = True
+            shutil.move(os.path.join(IMAGE_DIR, name),
+                        os.path.join(trash_dir, name))
+            ap = anno_path(name)
+            if os.path.exists(ap):
+                shutil.move(ap, os.path.join(trash_dir, os.path.basename(ap)))
+            deleted.append(name)
+        except OSError as exc:
+            failed.append({"name": name, "reason": str(exc)})
+
+    rel = None
+    if deleted:
+        rel = os.path.relpath(trash_dir, BASE_DIR).replace("\\", "/")
+        st = load_state()
+        log_action(st, "删除图片", "%d 张：%s（已移入 %s，可恢复）"
+                   % (len(deleted), "、".join(deleted[:8]), rel))
+        save_state(st)
+
+    return jsonify({
+        "ok": True,
+        "deleted": deleted,
+        "missing": missing,
+        "failed": failed,
+        "trash": rel,
+        "total_images": len(list_images()),
+    })
+
+
+@app.route("/api/images/restore", methods=["POST"])
+def api_restore_images():
+    """
+    把回收站里的最近一批（或指定批次）搬回去。
+
+    请求体：{"stamp": "20261027_232000"}（省略则恢复最近一次）
+    """
+    body = request.get_json(silent=True) or {}
+    stamp = body.get("stamp")
+    batches = _trash_batches()
+    if not batches:
+        return jsonify({"error": "回收站是空的，没有可恢复的内容"}), 400
+
+    batch = None
+    if stamp:
+        batch = next((b for b in batches if b["stamp"] == stamp), None)
+        if batch is None:
+            return jsonify({"error": "找不到这一批删除记录"}), 404
+    else:
+        batch = batches[0]
+
+    src_dir = os.path.join(TRASH_DIR, batch["stamp"])
+    restored, skipped = [], []
+    for f in batch["files"]:
+        is_anno = os.path.splitext(f)[1].lower() == ".json"
+        dst = os.path.join(ANNO_DIR if is_anno else IMAGE_DIR, f)
+        if os.path.exists(dst):
+            # 用户又把同名文件传回来了。不覆盖，交给人自己判断。
+            skipped.append(f)
+            continue
+        try:
+            shutil.move(os.path.join(src_dir, f), dst)
+            restored.append(f)
+        except OSError:
+            skipped.append(f)
+
+    # 搬空的批次目录删掉，回收站列表里不残留空条目
+    try:
+        if not os.listdir(src_dir):
+            os.rmdir(src_dir)
+    except OSError:
+        pass
+
+    images_back = [f for f in restored
+                   if os.path.splitext(f)[1].lower() != ".json"]
+    if images_back:
+        st = load_state()
+        log_action(st, "恢复图片", "%d 张：%s（来自 data/_trash/%s）"
+                   % (len(images_back), "、".join(images_back[:8]),
+                      batch["stamp"]))
+        save_state(st)
+
+    return jsonify({
+        "ok": True,
+        "restored": images_back,
+        "skipped": skipped,
+        "stamp": batch["stamp"],
+        "total_images": len(list_images()),
+    })
+
+
+# ---------------------------------------------------------------------------
 # 基础接口
 # ---------------------------------------------------------------------------
 
@@ -326,12 +489,23 @@ def api_images():
             "edited": edited,
             "total": total,
         })
+    # 最近一次删除的批次，前端据此显示「恢复」提示条。
+    # 只算图片数——标注 json 是跟着图一起删的，报数量只报图才符合直觉。
+    last_trash = None
+    for b in _trash_batches():
+        imgs = [f for f in b["files"]
+                if os.path.splitext(f)[1].lower() != ".json"]
+        if imgs:
+            last_trash = {"stamp": b["stamp"], "count": len(imgs)}
+            break
+
     return jsonify({
         "images": items,
         "total": len(items),
         "reviewed": sum(1 for i in items if i["reviewed"]),
         "edited_total": sum(i["edited"] for i in items),
         "round": state.get("round", 1),
+        "last_trash": last_trash,
     })
 
 

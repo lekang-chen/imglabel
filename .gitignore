@@ -75,3 +75,7 @@ canvas/_polyharness.html
 # 训练/评估用的临时 yaml（path 为绝对路径，不入库）
 dataset/_train.yaml
 dataset/_eval.yaml
+
+# 删除照片的回收站：软删除把「图片 + 标注」搬到这里，属于运行期数据。
+# 用户自己删哪张图不该进版本库，恢复靠界面上的「恢复」按钮。
+data/_trash/
