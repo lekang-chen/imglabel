@@ -1,0 +1,98 @@
+[
+  {
+    "weights": "model/best.pt",
+    "base": {
+      "box_map50": 0.7182,
+      "mask_map50": 0.4418,
+      "box_map50_95": 0.5362,
+      "mask_map50_95": 0.2057,
+      "seconds": 8.5
+    },
+    "tta": {
+      "box_map50": 0.7182,
+      "mask_map50": 0.4418,
+      "box_map50_95": 0.5362,
+      "mask_map50_95": 0.2057,
+      "seconds": 6.0
+    },
+    "r960": {
+      "box_map50": 0.7233,
+      "mask_map50": 0.4456,
+      "box_map50_95": 0.4649,
+      "mask_map50_95": 0.1955,
+      "seconds": 6.3
+    }
+  },
+  {
+    "weights": "runs/exp_head/weights/best.pt",
+    "base": {
+      "box_map50": 0.6988,
+      "mask_map50": 0.5331,
+      "box_map50_95": 0.5338,
+      "mask_map50_95": 0.2556,
+      "seconds": 5.9
+    },
+    "tta": {
+      "box_map50": 0.6988,
+      "mask_map50": 0.5331,
+      "box_map50_95": 0.5338,
+      "mask_map50_95": 0.2556,
+      "seconds": 6.0
+    },
+    "r960": {
+      "box_map50": 0.6734,
+      "mask_map50": 0.4914,
+      "box_map50_95": 0.4552,
+      "mask_map50_95": 0.2219,
+      "seconds": 6.0
+    }
+  },
+  {
+    "weights": "runs/exp_lowlr/weights/best.pt",
+    "base": {
+      "box_map50": 0.7259,
+      "mask_map50": 0.5148,
+      "box_map50_95": 0.5539,
+      "mask_map50_95": 0.2511,
+      "seconds": 6.0
+    },
+    "tta": {
+      "box_map50": 0.7259,
+      "mask_map50": 0.5148,
+      "box_map50_95": 0.5539,
+      "mask_map50_95": 0.2511,
+      "seconds": 6.1
+    },
+    "r960": {
+      "box_map50": 0.6673,
+      "mask_map50": 0.4698,
+      "box_map50_95": 0.463,
+      "mask_map50_95": 0.2305,
+      "seconds": 6.0
+    }
+  },
+  {
+    "weights": "runs/exp_head_long/weights/best.pt",
+    "base": {
+      "box_map50": 0.7072,
+      "mask_map50": 0.5384,
+      "box_map50_95": 0.5292,
+      "mask_map50_95": 0.264,
+      "seconds": 6.0
+    },
+    "tta": {
+      "box_map50": 0.7072,
+      "mask_map50": 0.5384,
+      "box_map50_95": 0.5292,
+      "mask_map50_95": 0.264,
+      "seconds": 5.7
+    },
+    "r960": {
+      "box_map50": 0.6445,
+      "mask_map50": 0.4951,
+      "box_map50_95": 0.4359,
+      "mask_map50_95": 0.244,
+      "seconds": 6.4
+    }
+  }
+]

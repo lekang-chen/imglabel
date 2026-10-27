@@ -612,12 +612,24 @@ def _seg_class_names(seg_model):
 # 用自训模型回标（第二轮迭代）
 # ---------------------------------------------------------------------------
 
-def run_relabel_job(job, image_dir, weights_path, conf=0.25, round_tag="R2"):
+def run_relabel_job(job, image_dir, weights_path, conf=0.40, round_tag="R2"):
     """
     用自训的 best.pt 重新预标注（回标），形成第二轮迭代。
 
     和首轮的区别：不用 YOLO-World，直接用自训的分割模型。
     因为自训模型已经学会了我们的十类，类别直接从模型出。
+
+    【conf 为什么是 0.40 而不是常见的 0.25】
+    阈值不是拍脑袋定的，换一次权重就要重新标定一次：模型迭代后置信度
+    的绝对数值会整体平移，同一张图上"原来 0.30 的框"可能变成"现在 0.25"，
+    阈值不动就会凭空多出一堆低分框，看起来像模型退化。
+
+    本轮权重（冻结主干继续微调）在 150 张图上实测：
+        conf=0.25 -> 809 个草稿，精确率 0.405
+        conf=0.40 -> 582 个草稿，精确率 0.498  <- 与上一轮 0.491 持平
+        conf=0.50 -> 489 个草稿，精确率 0.544
+    取 0.40 是为了让精确率回到上一轮水平，同时草稿数量相当（582 vs 627），
+    这样两轮的修正率才可比。详见 tools/eval_relabel_round.py。
     """
     from ultralytics import YOLO
     from core import CLASSES, Object

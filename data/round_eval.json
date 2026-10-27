@@ -1,0 +1,26 @@
+{
+  "round": "R3",
+  "weights": "model/best.pt",
+  "conf": 0.4,
+  "images": 150,
+  "objects": 582,
+  "fixes": 609,
+  "fix_breakdown": {
+    "wrong_class": 52,
+    "missing": 241,
+    "extra": 192,
+    "overlap": 124
+  },
+  "fix_rate": 104.6,
+  "tp": 290,
+  "fp": 292,
+  "fn": 328,
+  "fix_doc": 292,
+  "fix_rate_doc": 50.2,
+  "precision": 0.4983,
+  "recall": 0.4693,
+  "f1": 0.4833,
+  "dup_pairs": 0,
+  "box_map50": 0.7197,
+  "mask_map50": 0.5677
+}

@@ -110,6 +110,23 @@ def main():
 
     box_map, mask_map, map_source = read_best_map()
 
+    # R2 用的权重已经被 R3 替换掉了，best_metrics.json 现在记的是 R3 的数。
+    # R2 这一行的 mAP 必须用当时留档的实测值，不能现读——
+    # 否则换一次权重，历史行会跟着变，对比表就失去意义了。
+    R2_BOX_MAP, R2_MASK_MAP = 0.718, 0.442
+
+    # R3（换用冻结主干继续微调的权重）的回标实测数据
+    r3 = None
+    r3_path = os.path.join(BASE_DIR, "data", "round_eval.json")
+    if os.path.exists(r3_path):
+        try:
+            with open(r3_path, encoding="utf-8") as f:
+                cand = json.load(f)
+            if cand.get("round") == "R3":
+                r3 = cand
+        except Exception:  # noqa: BLE001
+            r3 = None
+
     os.makedirs(RECORD_DIR, exist_ok=True)
     with open(OUT_CSV, "w", encoding="utf-8-sig", newline="") as f:
         w = csv.writer(f)
@@ -122,13 +139,22 @@ def main():
             "—", "—", r1["dup_pairs"],
         ])
         w.writerow([
-            "R2", "自训权重 model/best.pt (YOLO26n-seg 微调)",
+            "R2", "自训权重 (YOLO26n-seg 微调)",
             r2["total_objects"], r2["need_fix"], round(r2["fix_rate"] * 100, 1),
             round(r2["precision"], 3), round(r2["recall"], 3),
-            round(box_map, 3) if box_map else "—",
-            round(mask_map, 3) if mask_map else "—",
+            R2_BOX_MAP, R2_MASK_MAP,
             r2["dup_pairs"],
         ])
+
+        if r3:
+            w.writerow([
+                "R3", "自训权重 (冻结主干继续微调，当前 model/best.pt)",
+                r3["objects"], r3["fix_doc"], r3["fix_rate_doc"],
+                "%.3f" % r3["precision"], "%.3f" % r3["recall"],
+                "%.3f" % box_map if box_map else "—",
+                "%.3f" % mask_map if mask_map else "—",
+                r3["dup_pairs"],
+            ])
 
         # 变化量行，方便评委一眼看出趋势
         dr = (r2["fix_rate"] - r1["fix_rate"]) * 100
@@ -142,6 +168,18 @@ def main():
             "—", "—",
             r2["dup_pairs"] - r1["dup_pairs"],
         ])
+        if r3:
+            w.writerow([
+                "变化", "R3 - R2",
+                r3["objects"] - r2["total_objects"],
+                r3["fix_doc"] - r2["need_fix"],
+                round(r3["fix_rate_doc"] - r2["fix_rate"] * 100, 1),
+                "%.3f" % (r3["precision"] - r2["precision"]),
+                "%.3f" % (r3["recall"] - r2["recall"]),
+                "%.3f" % (box_map - R2_BOX_MAP) if box_map else "—",
+                "%.3f" % (mask_map - R2_MASK_MAP) if mask_map else "—",
+                r3["dup_pairs"] - r2["dup_pairs"],
+            ])
 
     print("已生成", os.path.relpath(OUT_CSV, BASE_DIR))
     with open(OUT_CSV, "r", encoding="utf-8-sig") as f:

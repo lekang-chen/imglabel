@@ -1,0 +1,458 @@
+{
+  "split": "val",
+  "target_recall": 0.65,
+  "results": [
+    {
+      "weights": "model/best.pt",
+      "rows": [
+        {
+          "thr": 0.1,
+          "tp": 125,
+          "fp": 92,
+          "fn": 53,
+          "shape_bad": 73,
+          "precision": 0.576,
+          "recall": 0.7022,
+          "f1": 0.6329,
+          "mean_box_iou": 0.8574,
+          "workload": 234.5
+        },
+        {
+          "thr": 0.15,
+          "tp": 118,
+          "fp": 44,
+          "fn": 60,
+          "shape_bad": 68,
+          "precision": 0.7284,
+          "recall": 0.6629,
+          "f1": 0.6941,
+          "mean_box_iou": 0.8611,
+          "workload": 198.0
+        },
+        {
+          "thr": 0.2,
+          "tp": 103,
+          "fp": 25,
+          "fn": 75,
+          "shape_bad": 56,
+          "precision": 0.8047,
+          "recall": 0.5787,
+          "f1": 0.6732,
+          "mean_box_iou": 0.8773,
+          "workload": 203.0
+        },
+        {
+          "thr": 0.25,
+          "tp": 89,
+          "fp": 16,
+          "fn": 89,
+          "shape_bad": 51,
+          "precision": 0.8476,
+          "recall": 0.5,
+          "f1": 0.629,
+          "mean_box_iou": 0.8818,
+          "workload": 219.5
+        },
+        {
+          "thr": 0.3,
+          "tp": 80,
+          "fp": 11,
+          "fn": 98,
+          "shape_bad": 44,
+          "precision": 0.8791,
+          "recall": 0.4494,
+          "f1": 0.5948,
+          "mean_box_iou": 0.8827,
+          "workload": 229.0
+        },
+        {
+          "thr": 0.35,
+          "tp": 77,
+          "fp": 8,
+          "fn": 101,
+          "shape_bad": 43,
+          "precision": 0.9059,
+          "recall": 0.4326,
+          "f1": 0.5856,
+          "mean_box_iou": 0.8819,
+          "workload": 231.5
+        },
+        {
+          "thr": 0.4,
+          "tp": 74,
+          "fp": 5,
+          "fn": 104,
+          "shape_bad": 41,
+          "precision": 0.9367,
+          "recall": 0.4157,
+          "f1": 0.5759,
+          "mean_box_iou": 0.8848,
+          "workload": 233.5
+        },
+        {
+          "thr": 0.5,
+          "tp": 55,
+          "fp": 2,
+          "fn": 123,
+          "shape_bad": 25,
+          "precision": 0.9649,
+          "recall": 0.309,
+          "f1": 0.4681,
+          "mean_box_iou": 0.9071,
+          "workload": 260.5
+        }
+      ],
+      "best": {
+        "thr": 0.15,
+        "tp": 118,
+        "fp": 44,
+        "fn": 60,
+        "shape_bad": 68,
+        "precision": 0.7284,
+        "recall": 0.6629,
+        "f1": 0.6941,
+        "mean_box_iou": 0.8611,
+        "workload": 198.0
+      }
+    },
+    {
+      "weights": "runs/exp_head/weights/best.pt",
+      "rows": [
+        {
+          "thr": 0.1,
+          "tp": 145,
+          "fp": 245,
+          "fn": 33,
+          "shape_bad": 62,
+          "precision": 0.3718,
+          "recall": 0.8146,
+          "f1": 0.5106,
+          "mean_box_iou": 0.8455,
+          "workload": 342.0
+        },
+        {
+          "thr": 0.15,
+          "tp": 132,
+          "fp": 156,
+          "fn": 46,
+          "shape_bad": 57,
+          "precision": 0.4583,
+          "recall": 0.7416,
+          "f1": 0.5665,
+          "mean_box_iou": 0.8497,
+          "workload": 276.5
+        },
+        {
+          "thr": 0.2,
+          "tp": 123,
+          "fp": 100,
+          "fn": 55,
+          "shape_bad": 53,
+          "precision": 0.5516,
+          "recall": 0.691,
+          "f1": 0.6135,
+          "mean_box_iou": 0.8537,
+          "workload": 236.5
+        },
+        {
+          "thr": 0.25,
+          "tp": 115,
+          "fp": 68,
+          "fn": 63,
+          "shape_bad": 45,
+          "precision": 0.6284,
+          "recall": 0.6461,
+          "f1": 0.6371,
+          "mean_box_iou": 0.8667,
+          "workload": 216.5
+        },
+        {
+          "thr": 0.3,
+          "tp": 109,
+          "fp": 47,
+          "fn": 69,
+          "shape_bad": 42,
+          "precision": 0.6987,
+          "recall": 0.6124,
+          "f1": 0.6527,
+          "mean_box_iou": 0.871,
+          "workload": 206.0
+        },
+        {
+          "thr": 0.35,
+          "tp": 100,
+          "fp": 31,
+          "fn": 78,
+          "shape_bad": 39,
+          "precision": 0.7634,
+          "recall": 0.5618,
+          "f1": 0.6472,
+          "mean_box_iou": 0.875,
+          "workload": 206.5
+        },
+        {
+          "thr": 0.4,
+          "tp": 90,
+          "fp": 22,
+          "fn": 88,
+          "shape_bad": 35,
+          "precision": 0.8036,
+          "recall": 0.5056,
+          "f1": 0.6207,
+          "mean_box_iou": 0.8804,
+          "workload": 215.5
+        },
+        {
+          "thr": 0.5,
+          "tp": 79,
+          "fp": 10,
+          "fn": 99,
+          "shape_bad": 30,
+          "precision": 0.8876,
+          "recall": 0.4438,
+          "f1": 0.5918,
+          "mean_box_iou": 0.8888,
+          "workload": 223.0
+        }
+      ],
+      "best": {
+        "thr": 0.3,
+        "tp": 109,
+        "fp": 47,
+        "fn": 69,
+        "shape_bad": 42,
+        "precision": 0.6987,
+        "recall": 0.6124,
+        "f1": 0.6527,
+        "mean_box_iou": 0.871,
+        "workload": 206.0
+      }
+    },
+    {
+      "weights": "runs/exp_head_long/weights/best.pt",
+      "rows": [
+        {
+          "thr": 0.1,
+          "tp": 146,
+          "fp": 247,
+          "fn": 32,
+          "shape_bad": 66,
+          "precision": 0.3715,
+          "recall": 0.8202,
+          "f1": 0.5114,
+          "mean_box_iou": 0.8411,
+          "workload": 344.0
+        },
+        {
+          "thr": 0.15,
+          "tp": 142,
+          "fp": 156,
+          "fn": 36,
+          "shape_bad": 65,
+          "precision": 0.4765,
+          "recall": 0.7978,
+          "f1": 0.5966,
+          "mean_box_iou": 0.8415,
+          "workload": 260.5
+        },
+        {
+          "thr": 0.2,
+          "tp": 133,
+          "fp": 113,
+          "fn": 45,
+          "shape_bad": 61,
+          "precision": 0.5407,
+          "recall": 0.7472,
+          "f1": 0.6274,
+          "mean_box_iou": 0.851,
+          "workload": 233.5
+        },
+        {
+          "thr": 0.25,
+          "tp": 125,
+          "fp": 77,
+          "fn": 53,
+          "shape_bad": 56,
+          "precision": 0.6188,
+          "recall": 0.7022,
+          "f1": 0.6579,
+          "mean_box_iou": 0.857,
+          "workload": 211.0
+        },
+        {
+          "thr": 0.3,
+          "tp": 120,
+          "fp": 59,
+          "fn": 58,
+          "shape_bad": 54,
+          "precision": 0.6704,
+          "recall": 0.6742,
+          "f1": 0.6723,
+          "mean_box_iou": 0.8613,
+          "workload": 202.0
+        },
+        {
+          "thr": 0.35,
+          "tp": 114,
+          "fp": 39,
+          "fn": 64,
+          "shape_bad": 51,
+          "precision": 0.7451,
+          "recall": 0.6404,
+          "f1": 0.6888,
+          "mean_box_iou": 0.8671,
+          "workload": 192.5
+        },
+        {
+          "thr": 0.4,
+          "tp": 108,
+          "fp": 30,
+          "fn": 70,
+          "shape_bad": 50,
+          "precision": 0.7826,
+          "recall": 0.6067,
+          "f1": 0.6835,
+          "mean_box_iou": 0.866,
+          "workload": 195.0
+        },
+        {
+          "thr": 0.5,
+          "tp": 85,
+          "fp": 15,
+          "fn": 93,
+          "shape_bad": 38,
+          "precision": 0.85,
+          "recall": 0.4775,
+          "f1": 0.6115,
+          "mean_box_iou": 0.8805,
+          "workload": 220.0
+        }
+      ],
+      "best": {
+        "thr": 0.35,
+        "tp": 114,
+        "fp": 39,
+        "fn": 64,
+        "shape_bad": 51,
+        "precision": 0.7451,
+        "recall": 0.6404,
+        "f1": 0.6888,
+        "mean_box_iou": 0.8671,
+        "workload": 192.5
+      }
+    },
+    {
+      "weights": "runs/exp_lowlr/weights/best.pt",
+      "rows": [
+        {
+          "thr": 0.1,
+          "tp": 140,
+          "fp": 192,
+          "fn": 38,
+          "shape_bad": 61,
+          "precision": 0.4217,
+          "recall": 0.7865,
+          "f1": 0.549,
+          "mean_box_iou": 0.8488,
+          "workload": 298.5
+        },
+        {
+          "thr": 0.15,
+          "tp": 134,
+          "fp": 103,
+          "fn": 44,
+          "shape_bad": 59,
+          "precision": 0.5654,
+          "recall": 0.7528,
+          "f1": 0.6458,
+          "mean_box_iou": 0.8518,
+          "workload": 220.5
+        },
+        {
+          "thr": 0.2,
+          "tp": 115,
+          "fp": 61,
+          "fn": 63,
+          "shape_bad": 49,
+          "precision": 0.6534,
+          "recall": 0.6461,
+          "f1": 0.6497,
+          "mean_box_iou": 0.8644,
+          "workload": 211.5
+        },
+        {
+          "thr": 0.25,
+          "tp": 108,
+          "fp": 41,
+          "fn": 70,
+          "shape_bad": 45,
+          "precision": 0.7248,
+          "recall": 0.6067,
+          "f1": 0.6606,
+          "mean_box_iou": 0.8713,
+          "workload": 203.5
+        },
+        {
+          "thr": 0.3,
+          "tp": 95,
+          "fp": 27,
+          "fn": 83,
+          "shape_bad": 35,
+          "precision": 0.7787,
+          "recall": 0.5337,
+          "f1": 0.6333,
+          "mean_box_iou": 0.8732,
+          "workload": 210.5
+        },
+        {
+          "thr": 0.35,
+          "tp": 85,
+          "fp": 17,
+          "fn": 93,
+          "shape_bad": 30,
+          "precision": 0.8333,
+          "recall": 0.4775,
+          "f1": 0.6071,
+          "mean_box_iou": 0.8859,
+          "workload": 218.0
+        },
+        {
+          "thr": 0.4,
+          "tp": 75,
+          "fp": 12,
+          "fn": 103,
+          "shape_bad": 26,
+          "precision": 0.8621,
+          "recall": 0.4213,
+          "f1": 0.566,
+          "mean_box_iou": 0.8956,
+          "workload": 231.0
+        },
+        {
+          "thr": 0.5,
+          "tp": 58,
+          "fp": 9,
+          "fn": 120,
+          "shape_bad": 17,
+          "precision": 0.8657,
+          "recall": 0.3258,
+          "f1": 0.4735,
+          "mean_box_iou": 0.9145,
+          "workload": 257.5
+        }
+      ],
+      "best": {
+        "thr": 0.25,
+        "tp": 108,
+        "fp": 41,
+        "fn": 70,
+        "shape_bad": 45,
+        "precision": 0.7248,
+        "recall": 0.6067,
+        "f1": 0.6606,
+        "mean_box_iou": 0.8713,
+        "workload": 203.5
+      }
+    }
+  ]
+}

@@ -59,8 +59,17 @@ def count_edits():
 
 
 def main():
-    if not os.path.exists(MODEL):
-        print("[错误] 找不到 model/best.pt")
+    import argparse
+    ap = argparse.ArgumentParser(description="评估权重在验证集上的真实指标")
+    ap.add_argument("--imgsz", type=int, default=640,
+                    help="推理分辨率；原图长边 960，试 960 常能提升小目标")
+    ap.add_argument("--model", default=MODEL, help="要评估的权重路径")
+    ap.add_argument("--out", default=OUT_JSON, help="结果写入的 json 路径")
+    args = ap.parse_args()
+
+    model_path = args.model
+    if not os.path.exists(model_path):
+        print("[错误] 找不到权重: %s" % model_path)
         return 1
 
     lines = ["path: %s" % DATASET_DIR.replace("\\", "/"),
@@ -72,15 +81,16 @@ def main():
 
     try:
         from ultralytics import YOLO
-        print("[1/2] 加载权重: %s" % MODEL)
-        model = YOLO(MODEL)
-        print("[2/2] 在 dataset/ 的验证集上评估（用当前最新标签）...")
-        r = model.val(data=TMP_YAML, imgsz=640, batch=8, verbose=False)
+        print("[1/2] 加载权重: %s" % model_path)
+        model = YOLO(model_path)
+        print("[2/2] 在 dataset/ 验证集上评估（imgsz=%d，当前最新标签）..." % args.imgsz)
+        r = model.val(data=TMP_YAML, imgsz=args.imgsz, batch=8, verbose=False)
 
         total_objs, edited = count_edits()
         val_imgs = len(os.listdir(os.path.join(DATASET_DIR, "images", "val")))
         out = {
-            "model": "model/best.pt",
+            "model": os.path.relpath(model_path, BASE_DIR).replace("\\", "/"),
+            "imgsz": args.imgsz,
             "box_map50": round(float(r.box.map50), 4),
             "box_map50_95": round(float(r.box.map), 4),
             "mask_map50": round(float(r.seg.map50), 4),
@@ -91,7 +101,7 @@ def main():
             "measured_at": time.strftime("%Y-%m-%d %H:%M:%S"),
             "note": "在最终修正标签上实测；修正条数见 dataset_edited",
         }
-        with open(OUT_JSON, "w", encoding="utf-8") as f:
+        with open(args.out, "w", encoding="utf-8") as f:
             json.dump(out, f, ensure_ascii=False, indent=2)
 
         print("")
@@ -99,10 +109,10 @@ def main():
               % (out["box_map50"], out["box_map50_95"]))
         print("  掩码 mAP50      : %.3f  (mAP50-95 %.3f)"
               % (out["mask_map50"], out["mask_map50_95"]))
-        print("  验证集          : %d 张图" % val_imgs)
+        print("  验证集          : %d 张图，推理 %d" % (val_imgs, args.imgsz))
         print("  当时标注状态    : %d 个对象，其中 %d 条人工修正"
               % (total_objs, edited))
-        print("  已写入          : %s" % OUT_JSON)
+        print("  已写入          : %s" % args.out)
         return 0
     finally:
         if os.path.exists(TMP_YAML):
