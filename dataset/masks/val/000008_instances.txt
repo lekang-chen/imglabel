@@ -1,2 +1,1 @@
-1 couch
-2 potted plant
+1 potted plant

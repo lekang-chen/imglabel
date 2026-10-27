@@ -2,11 +2,9 @@
 2 couch
 3 dining table
 4 chair
-5 chair
-6 tv
+5 tv
+6 potted plant
 7 chair
-8 potted plant
-9 chair
+8 book
+9 book
 10 book
-11 book
-12 book

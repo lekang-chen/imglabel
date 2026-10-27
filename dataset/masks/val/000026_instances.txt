@@ -1,7 +1,2 @@
 1 person
-2 laptop
-3 laptop
-4 laptop
-5 book
-6 book
-7 laptop
+2 book

@@ -12,8 +12,7 @@
 12 chair
 13 person
 14 chair
-15 chair
-16 person
-17 chair
-18 potted plant
-19 person
+15 person
+16 chair
+17 potted plant
+18 person

@@ -221,6 +221,40 @@ console.log('\n== maskToPolygon ==');
   const poly = Geo.maskToPolygon(b.alpha, b.w, b.h, { eps: 0.5, maxPts: 60, scale: 200 });
   ok('超限时自动压缩到 <= 60 点', poly.length <= 60, poly.length + ' 点');
 }
+{
+  // 【贴边掩码的坐标必须夹在 [0,1]】
+  // 轮廓是沿像素缝隙追踪的，贴着画布边缘的物体会产出 -0.5 / w-0.5 的坐标，
+  // 除以宽度就是 -0.0005 这样的负数，导出成 YOLO txt 属于非法坐标。
+  // 实测就因为这个报了「坐标 -0.0009 超出 [0,1]」。
+  const b = makeBuf(64, 48);
+  fillRect(b, 0, 0, 64, 48);          // 铺满整幅，四条边全贴边
+  const p = Geo.maskToPolygon(b.alpha, b.w, b.h, { eps: 0.5, maxPts: 180, scaleX: 64, scaleY: 48 });
+  let bad = [];
+  p.forEach(([x, y]) => {
+    if (x < 0 || x > 1) bad.push('x=' + x.toFixed(5));
+    if (y < 0 || y > 1) bad.push('y=' + y.toFixed(5));
+  });
+  ok('满幅掩码的坐标全部落在 [0,1]', bad.length === 0, bad.slice(0, 3).join(', '));
+
+  // 只有上/左边贴边的情况（最容易负数）
+  const b2 = makeBuf(64, 48);
+  fillRect(b2, 0, 0, 32, 24);
+  const p2 = Geo.maskToPolygon(b2.alpha, b2.w, b2.h, { eps: 0.5, maxPts: 180, scaleX: 64, scaleY: 48 });
+  let bad2 = [];
+  p2.forEach(([x, y]) => {
+    if (x < 0 || x > 1 || y < 0 || y > 1) bad2.push(`(${x.toFixed(5)},${y.toFixed(5)})`);
+  });
+  ok('左上角贴边掩码无负坐标', bad2.length === 0, bad2.slice(0, 3).join(' '));
+
+  // 夹取不能把形状弄坏：面积仍应接近 1/8（32x24 占 64x48 的四分之一）
+  let a2 = 0;
+  for (let i = 0; i < p2.length; i++) {
+    const q1 = p2[i], q2 = p2[(i + 1) % p2.length];
+    a2 += q1[0] * q2[1] - q2[0] * q1[1];
+  }
+  a2 = Math.abs(a2 / 2);
+  ok('夹取后面积仍约 0.25', Math.abs(a2 - 0.25) < 0.02, a2.toFixed(4));
+}
 
 console.log(`\n结果：${pass} 通过 / ${fail} 失败\n`);
 process.exit(fail ? 1 : 0);

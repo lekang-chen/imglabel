@@ -1,6 +1,2 @@
-1 dining table
-2 tv
-3 laptop
-4 tv
-5 laptop
-6 tv
+1 laptop
+2 dining table

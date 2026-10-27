@@ -1,15 +1,12 @@
 1 dining table
 2 chair
 3 couch
-4 tv
-5 laptop
-6 laptop
-7 bottle
+4 laptop
+5 bottle
+6 book
+7 book
 8 book
 9 book
 10 book
 11 cup
 12 book
-13 book
-14 cup
-15 cup

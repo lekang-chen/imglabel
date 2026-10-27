@@ -1,9 +1,7 @@
 1 dining table
-2 bottle
-3 bottle
-4 cup
+2 chair
+3 chair
+4 person
 5 bottle
 6 bottle
-7 chair
-8 chair
-9 person
+7 cup

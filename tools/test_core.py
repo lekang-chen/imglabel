@@ -331,6 +331,71 @@ def test_simplify_closed_ring():
           len(out4) > 40 and err < 0.01, "实际 %d 点" % len(out4))
 
 
+def test_export_clamps_out_of_range():
+    """导出时坐标越界必须被夹到 [0,1]（真实踩过的坑）。
+
+    现象：界面点「导出数据集」报「格式校验 有问题」，
+    列出 6 处 `坐标 -0.0009 超出 [0,1]`。
+
+    根因：画笔/橡皮改形状走的是前端 geom.js 的 maskToPolygon，
+    轮廓沿「像素缝隙」追踪，贴边的物体会产出 -0.5 或 w-0.5 的坐标
+    （半个像素在画布外），除以宽度就变成 -0.0005 这种负数。
+    YOLO 规范要求坐标在 [0,1]，越界会被校验判为有问题，
+    部分训练器还会直接跳过该行（等于白标了一个物体）。
+
+    修法：前端生成时夹取（治本）+ 导出时再兜一次（保住历史脏数据）。
+    这里测的是导出侧的兜底：即使标注文件里已经存了负坐标，
+    导出的 txt 也必须全部落在 [0,1]。
+    """
+    print("\n[8] 导出坐标越界夹取")
+    tmp = tempfile.mkdtemp(prefix="imglabel_clamp_")
+    try:
+        img_dir = os.path.join(tmp, "images")
+        os.makedirs(img_dir, exist_ok=True)
+        from PIL import Image
+        # 用 2 张图：导出器会强制留至少 1 张给训练集，
+        # 只放 1 张会导致验证集为空、自检报「验证集为空」——
+        # 那是切分策略的正常行为，不是坐标问题。
+        for name in ("edge.jpg", "edge2.jpg"):
+            Image.new("RGB", (120, 90), (180, 180, 180)).save(
+                os.path.join(img_dir, name))
+
+        # 故意构造越界多边形：模拟贴边物体的 -0.5 像素
+        bad_poly = [[-0.0005, -0.0009], [0.5, -0.0026], [1.0005, 0.5],
+                    [0.5, 1.0006], [-0.0023, 0.5]]
+        anns = [Annotation(n, 120, 90, objects=[Object("book", list(bad_poly))])
+                for n in ("edge.jpg", "edge2.jpg")]
+        out_dir = os.path.join(tmp, "dataset")
+        export_dataset(anns, out_dir, img_dir, val_ratio=0.5)
+
+        lbl_dir = os.path.join(out_dir, "labels", "val")
+        if not (os.path.isdir(lbl_dir) and os.listdir(lbl_dir)):
+            lbl_dir = os.path.join(out_dir, "labels", "train")
+        names = os.listdir(lbl_dir)
+        check("导出了标签文件", len(names) >= 1, "实际 %d 个" % len(names))
+        f = names[0]
+        with open(os.path.join(lbl_dir, f), encoding="utf-8") as fh:
+            nums = [float(v) for v in fh.read().split()[1:]]
+
+        check("导出后坐标为 %.4f 个值" % len(nums), len(nums) == 10)
+        check("全部坐标落在 [0,1]",
+              all(0.0 <= v <= 1.0 for v in nums),
+              "越界值: %s" % [v for v in nums if not 0.0 <= v <= 1.0])
+
+        ok, problems, _ = validate_dataset(out_dir)
+        check("越界标注导出后仍通过格式自检", ok, "; ".join(problems[:3]))
+
+        # 检测格式（外接矩形）也要夹
+        from exporter import export_yolo_label
+        det_line = export_yolo_label(anns[0], has_seg=False)
+        det_nums = [float(v) for v in det_line.split()[1:]]
+        check("检测格式坐标也在 [0,1]",
+              all(0.0 <= v <= 1.0 for v in det_nums),
+              "越界值: %s" % [v for v in det_nums if not 0.0 <= v <= 1.0])
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 if __name__ == "__main__":
     print("=" * 60)
     print("核心逻辑自测")
@@ -343,6 +408,7 @@ if __name__ == "__main__":
     test_edge_cases()
     test_png_roundtrip()
     test_simplify_closed_ring()
+    test_export_clamps_out_of_range()
     print("\n" + "=" * 60)
     print("结果: %d 通过, %d 失败" % (PASS, FAIL))
     print("=" * 60)

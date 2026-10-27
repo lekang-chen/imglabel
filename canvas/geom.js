@@ -308,7 +308,14 @@
     }
 
     const sx = o.scaleX || w, sy = o.scaleY || h;
-    return simple.map(p => [p[0] / sx, p[1] / sy]);
+    // 【为什么要把坐标夹到 [0,1]】
+    // traceBoundaries 是沿「像素缝隙」走的，轮廓贴着图像边缘时会产出 -0.5
+    // 或 w-0.5 这样的坐标（半个像素在画布外）。除以 w 之后就是 -0.0005 之类
+    // 的负数，写进 YOLO txt 就是非法坐标——导出校验会报
+    // 「坐标 -0.0009 超出 [0,1]」，训练器读到还可能直接跳过该行。
+    // 半个像素的夹取对形状没有任何可见影响，但能让导出永远合法。
+    const clamp01 = v => (v < 0 ? 0 : (v > 1 ? 1 : v));
+    return simple.map(p => [clamp01(p[0] / sx), clamp01(p[1] / sy)]);
   }
 
   return { traceContour, traceBoundaries, simplifyDP, simplifyClosed,

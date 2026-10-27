@@ -73,15 +73,25 @@ def export_yolo_label(ann, has_seg=True):
         if has_seg:
             flat = []
             for x, y in obj.polygon:
+                # 【兜底夹取到 [0,1]】
+                # 轮廓沿像素缝隙追踪时，贴边物体可能产生 -0.5 像素的顶点，
+                # 归一化后是 -0.0005 这种负数。YOLO 规范要求坐标在 [0,1]，
+                # 越界会被校验判为有问题，部分训练器还会直接跳过该行。
+                # 前端 geom.js 已在生成时夹取，这里再夹一次是为了兜住
+                # 历史标注文件里已经存在的脏数据（那批数据不会再回头重算）。
+                x = 0.0 if x < 0 else (1.0 if x > 1 else x)
+                y = 0.0 if y < 0 else (1.0 if y > 1 else y)
                 flat.append("%.6f" % x)
                 flat.append("%.6f" % y)
             lines.append("%d %s" % (cls_id, " ".join(flat)))
         else:
             xmin, ymin, xmax, ymax = obj.bbox()
+            xmin, ymin = max(0.0, xmin), max(0.0, ymin)
+            xmax, ymax = min(1.0, xmax), min(1.0, ymax)
             xc = (xmin + xmax) / 2.0
             yc = (ymin + ymax) / 2.0
-            w = xmax - xmin
-            h = ymax - ymin
+            w = max(0.0, xmax - xmin)
+            h = max(0.0, ymax - ymin)
             lines.append("%d %.6f %.6f %.6f %.6f" % (cls_id, xc, yc, w, h))
     return "\n".join(lines) + ("\n" if lines else "")
 

@@ -1,6 +1,2 @@
-1 person
-2 dining table
-3 cup
-4 cup
-5 cup
-6 bottle
+1 bottle
+2 cup
