@@ -38,6 +38,13 @@
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
 
+/* 【必须兜这一条】HTML 的 hidden 属性由浏览器默认样式表实现为
+   [hidden]{display:none}，但作者样式表里任何 display 声明都能盖过它。
+   本项目 #polyHint 同时是 .tool-group（display:flex），
+   于是 JS 里 bar.hidden = true 完全不生效——描边提示条在"选择"模式下
+   也一直挂在工具栏上，三个按钮还在。统一兜住，避免再踩。 */
+[hidden] { display: none !important; }
+
 body {
   font-family: var(--font);
   font-size: 13px;
@@ -184,6 +191,9 @@ body {
 }
 .empty-hint p { font-size: 13px; margin-bottom: 6px; }
 .empty-hint .muted { color: #55555c; font-size: 12px; }
+/* 空白提示整体不接鼠标事件（否则会挡住画布拖拽），
+   但里面的「上传照片」按钮必须能点，单独放行 */
+.empty-hint .btn { pointer-events: auto; margin-top: 10px; }
 
 /* 工具栏 */
 .toolbar {
@@ -367,6 +377,60 @@ table.cmp tr:last-child td { border-bottom: none; }
 
 .log-line { font-family: var(--mono); font-size: 11px; color: var(--text-2);
             padding: 2px 0; border-bottom: 1px solid #f4f4f6; }
+
+/* ---------------- 上传区 ---------------- */
+/* 放在左栏最上方：新用户打开页面第一眼看到的就是这个按钮，
+   不用先去文件夹里拷图片、再回来点预标注。 */
+.upload-box {
+  padding: 10px 12px 8px;
+  border-bottom: 1px solid var(--line);
+  background: var(--panel);
+}
+.hidden-input { display: none; }
+.btn-upload {
+  width: 100%;
+  height: 34px;
+  font-size: 13px;
+  font-weight: 500;
+  display: flex; align-items: center; justify-content: center; gap: 4px;
+}
+.upload-tip {
+  margin-top: 6px;
+  font-size: 11px;
+  color: var(--text-3);
+  text-align: center;
+  line-height: 1.5;
+}
+.upload-auto {
+  margin-top: 6px;
+  justify-content: center;
+  color: var(--text-2);
+  font-size: 11.5px;
+}
+/* 上传中：按钮禁用给出明确反馈，避免用户重复点击堆任务 */
+.btn-upload.busy { opacity: .6; cursor: progress; }
+
+/* 全屏拖拽提示 */
+.drop-mask {
+  position: fixed; inset: 0; z-index: 300;
+  background: rgba(37, 99, 235, .10);
+  border: 2px dashed var(--accent);
+  display: flex; align-items: center; justify-content: center;
+  pointer-events: none;
+}
+.drop-inner {
+  background: rgba(255, 255, 255, .96);
+  border: 1px solid var(--line-2);
+  box-shadow: 0 10px 40px rgba(0, 0, 0, .12);
+  border-radius: 12px;
+  padding: 26px 40px;
+  text-align: center;
+  font-size: 14px;
+  color: var(--text);
+}
+.drop-icon {
+  font-size: 30px; line-height: 1; margin-bottom: 10px; color: var(--accent);
+}
 
 /* ---------------- 提示条 ---------------- */
 .toast {

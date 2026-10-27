@@ -192,7 +192,29 @@ async function loadImages() {
   $('statReviewed').textContent = `${d.reviewed} / ${d.total}`;
   $('statEdited').textContent = `${d.edited_total} / 60`;
   renderImageList();
+  updateEmptyHint();
   await refreshRate();
+}
+
+/**
+ * 画布中央的空白提示。
+ * 分三种情况：没图 / 有图但没选 / 选中了（隐藏）。
+ * 【为什么要分】原来是写死一句「还没有图片」，用户上传了 150 张
+ * 但还没点某张图时，页面正中央仍然写着「还没有图片」，明显不对。
+ */
+function updateEmptyHint() {
+  const hint = $('emptyHint');
+  if (!hint) return;
+  if (S.current) { hint.classList.add('hidden'); return; }
+  hint.classList.remove('hidden');
+  const hasImg = S.images.length > 0;
+  $('emptyTitle').textContent = hasImg
+    ? `已加载 ${S.images.length} 张图片`
+    : '还没有图片';
+  $('emptySub').textContent = hasImg
+    ? '从左侧列表选一张开始，或上传新照片'
+    : '把照片拖进这个窗口，或点下面的按钮';
+  $('btnUploadEmpty').textContent = hasImg ? '＋ 再传几张' : '＋ 上传照片';
 }
 
 async function refreshRate() {
@@ -845,7 +867,8 @@ function bindEvents() {
   $('btnFit').onclick = () => { fitCanvas(); draw(); };
 
   // 顶栏按钮
-  $('btnPrelabel').onclick = startPrelabel;
+  // 用箭头函数包一层：直接挂函数的话，点击事件对象会被当成 opts 传进去
+  $('btnPrelabel').onclick = () => startPrelabel();
   $('btnRelabel').onclick = startRelabel;
   $('btnExport').onclick = doExport;
   $('btnTrain').onclick = doTrain;
@@ -855,6 +878,12 @@ function bindEvents() {
   $('modalClose').onclick = () => $('modal').classList.add('hidden');
   window.onresize = () => { fitCanvas(); draw(); };
   window.onbeforeunload = e => { if (S.dirty) { e.preventDefault(); e.returnValue = ''; } };
+
+  // 上传：按钮 → 文件选择框 → 选完立刻上传
+  $('btnUpload').onclick = pickFiles;
+  $('btnUploadEmpty').onclick = pickFiles;
+  $('fileInput').onchange = e => uploadFiles(e.target.files);
+  bindDropUpload();
 }
 
 // ---------------------------------------------------------------- 画布事件
@@ -1086,17 +1115,159 @@ function finishPolygon() {
   $('btnCancelPoly').onclick = () => $('modal').classList.add('hidden');
 }
 
+// ---------------------------------------------------------------- 上传
+/* ==========================================================================
+   上传照片 → 自动预标注 → 直接开始标注
+   --------------------------------------------------------------------------
+   【为什么一次只传一张】
+   fetch 没有上传进度事件。一次多张打成一个包，进度条只能一直转，
+   用户不知道卡在哪。逐张串行上传，每传完一张进度条走一格，
+   而且某张坏了不影响其余张（单张失败只记进 skipped）。
+   ========================================================================== */
+
+const UPLOAD_EXT = /\.(jpe?g|png|bmp|webp)$/i;
+
+function pickFiles() {
+  const inp = $('fileInput');
+  // 先清空：否则连续两次选同一个文件时不会触发 change
+  inp.value = '';
+  inp.click();
+}
+
+function isImageFile(f) {
+  return (f.type && f.type.startsWith('image/')) || UPLOAD_EXT.test(f.name || '');
+}
+
+async function uploadFiles(fileList) {
+  const files = Array.from(fileList || []);
+  if (!files.length) return;
+
+  const imgs = files.filter(isImageFile);
+  const notImage = files.length - imgs.length;
+  if (!imgs.length) {
+    toast('选中的文件不是图片（支持 jpg / png / bmp / webp）', true);
+    return;
+  }
+
+  const btn = $('btnUpload');
+  const btnHTML = btn.innerHTML;
+  btn.disabled = true;
+  btn.classList.add('busy');
+  btn.textContent = '上传中…';
+
+  $('progressWrap').classList.remove('hidden');
+  $('progressFill').style.width = '0%';
+  $('progressText').textContent = '准备上传…';
+
+  const saved = [];
+  const skipped = [];
+  try {
+    for (let i = 0; i < imgs.length; i++) {
+      const f = imgs[i];
+      $('progressText').textContent = `上传 ${i + 1}/${imgs.length}  ${f.name}`;
+      const fd = new FormData();
+      fd.append('file', f);
+      try {
+        const r = await api('/api/upload', { method: 'POST', body: fd });
+        saved.push(...(r.saved || []));
+        skipped.push(...(r.skipped || []));
+      } catch (e) {
+        skipped.push({ name: f.name, reason: e.message });
+      }
+      $('progressFill').style.width =
+        Math.round((i + 1) / imgs.length * 100) + '%';
+    }
+  } finally {
+    btn.disabled = false;
+    btn.classList.remove('busy');
+    btn.innerHTML = btnHTML;
+  }
+
+  await loadImages();
+
+  if (!saved.length) {
+    $('progressText').textContent = '上传失败';
+    toast('没有图片上传成功：'
+          + (skipped[0] ? skipped[0].reason : '未知原因'), true);
+    return;
+  }
+
+  const names = saved.map(s => s.name);
+  let msg = `已上传 ${saved.length} 张`;
+  if (notImage) msg += `，忽略 ${notImage} 个非图片文件`;
+  $('progressText').textContent = msg;
+
+  if (skipped.length) {
+    toast(`${saved.length} 张成功，${skipped.length} 张跳过：`
+          + skipped[0].reason, true);
+  }
+
+  // 一键流程：上传完直接预标注，然后自动打开第一张新图开始改
+  if ($('autoPrelabel').checked) {
+    await startPrelabel({ images: names, pickAfter: names[0] });
+  } else {
+    toast(msg + '，点「预标注」生成草稿');
+    await selectImage(names[0]);
+  }
+}
+
+/** 拖拽：整个窗口都能接图片 */
+function bindDropUpload() {
+  const mask = $('dropMask');
+  let depth = 0;   // dragenter/dragleave 会在子元素间反复触发，用计数抵消
+
+  const hasFiles = e =>
+    e.dataTransfer && Array.from(e.dataTransfer.types || []).includes('Files');
+
+  window.addEventListener('dragenter', e => {
+    if (!hasFiles(e)) return;
+    e.preventDefault();
+    depth++;
+    mask.classList.remove('hidden');
+  });
+
+  window.addEventListener('dragover', e => {
+    if (!hasFiles(e)) return;
+    e.preventDefault();          // 不阻止的话浏览器会直接打开这张图
+    e.dataTransfer.dropEffect = 'copy';
+  });
+
+  window.addEventListener('dragleave', e => {
+    if (!hasFiles(e)) return;
+    depth = Math.max(0, depth - 1);
+    if (!depth) mask.classList.add('hidden');
+  });
+
+  window.addEventListener('drop', e => {
+    if (!hasFiles(e)) return;
+    e.preventDefault();
+    depth = 0;
+    mask.classList.add('hidden');
+    uploadFiles(e.dataTransfer.files);
+  });
+}
+
 // ---------------------------------------------------------------- 预标注
-async function startPrelabel() {
-  if (!S.images.length) { toast('data/images/ 里还没有图片', true); return; }
-  if (!confirm('将用官方预训练权重对全部图片生成草稿。\n已有的人工修正会被覆盖，确定继续？')) return;
+async function startPrelabel(opts) {
+  const o = opts || {};
+  // images 有值 = 只处理这几张；为空 = 处理全部
+  const only = Array.isArray(o.images) && o.images.length ? o.images : null;
+  const scope = only ? `${only.length} 张新图` : '全部图片';
+
+  if (!only && !S.images.length) { toast('还没有图片，先上传照片', true); return; }
+  if (!o.silent) {
+    if (!confirm(`将用官方预训练权重对${scope}生成草稿。\n\n`
+                 + (only ? '只影响新上传的图，已修正的其他图不会被覆盖。\n\n' : '')
+                 + '确定继续？')) return;
+  }
+
   $('progressWrap').classList.remove('hidden');
   try {
     const r = await api('/api/prelabel/start', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model: 'official' }),
+      body: JSON.stringify({ model: 'official', images: only }),
     });
-    pollProgress(r.job_id, 'official');
+    pollProgress(r.job_id, 'official', o.pickAfter || null);
   } catch (e) { toast('启动失败: ' + e.message, true); }
 }
 
@@ -1125,7 +1296,7 @@ async function startRelabel() {
   } catch (e) { toast('启动失败: ' + e.message, true); }
 }
 
-function pollProgress(jobId, mode) {
+function pollProgress(jobId, mode, pickAfter) {
   const timer = setInterval(async () => {
     try {
       const p = await api('/api/prelabel/progress/' + jobId);
@@ -1137,9 +1308,14 @@ function pollProgress(jobId, mode) {
         $('progressText').textContent = p.status === 'done'
           ? `完成，共 ${p.total} 张` : p.message;
         if (p.status === 'done') {
-          toast(mode === 'custom' ? '回标完成' : '预标注完成');
+          toast(mode === 'custom' ? '回标完成' : '预标注完成，可以开始改了');
           await loadImages();
-          if (S.current) await selectImage(S.current);
+          // 上传流程会指定 pickAfter：直接跳到刚标好的新图，省一次点击
+          const target = pickAfter || S.current;
+          if (target) {
+            S.dirty = false;   // 草稿刚生成，没有待保存的修改
+            await selectImage(target);
+          }
         }
       }
     } catch (e) { clearInterval(timer); }
@@ -1291,6 +1467,8 @@ window.__APP__ = {
   // 撤销栈：自动化测试要直接触发并检查栈深，所以一并导出。
   undo, redo, pushUndo, addObject, deleteSelected, changeClass,
   snapshot: snapshotAnno, applySnapshot,
+  // 上传：测试要验证「选完文件后状态机怎么走」，所以把入口导出去
+  uploadFiles, pickFiles,
 };
 
 // 自动化测试脚本（仅在带 ?uitest=1 时按需加载）

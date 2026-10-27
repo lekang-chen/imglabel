@@ -12,6 +12,7 @@
      T9  撤销「改类别」
      T10 撤销「画笔改形状」，多边形逐点还原
      T11 撤销栈上限 50；新操作清空重做分支
+     T12 上传入口：按钮/多选/默认勾选、非图片被拒、拖拽遮罩显隐
 
    【这个文件必须放在 canvas/ 下】
    Flask 的static_folder 指向 canvas/，app.js 在 ?uitest=1 时
@@ -334,6 +335,50 @@
     ok('新操作清空重做分支', S.redoStack.length === 0,
        redoBefore + ' -> ' + S.redoStack.length);
     S.undoStack.length = 0; S.redoStack.length = 0;
+
+    // ---------- T12 上传入口（上传 → 一键预标注） ----------
+    // 这一组只验证「界面接线」和「防御分支」：
+    // 真上传会往 data/images 写文件，自动化测试不该污染数据集，
+    // 所以端到端上传由 curl 手工验证，这里只测不会产生副作用的部分。
+    const upBtn = d.getElementById('btnUpload');
+    const fileInp = d.getElementById('fileInput');
+    const autoChk = d.getElementById('autoPrelabel');
+    ok('上传按钮存在', !!upBtn);
+    ok('文件输入支持多选且限定图片', !!fileInp && fileInp.multiple
+       && /image/.test(fileInp.accept || ''),
+       fileInp ? `multiple=${fileInp.multiple} accept=${fileInp.accept}` : '缺失');
+    ok('默认勾选「上传后自动预标注」', !!autoChk && autoChk.checked);
+
+    // 非图片文件必须被挡在发请求之前，且不能改动图片列表
+    const imgBefore = S.images.length;
+    let netCalled = false;
+    const realFetch = w.fetch;
+    w.fetch = function () { netCalled = true; return realFetch.apply(this, arguments); };
+    try {
+      await A.uploadFiles([new w.File(['x'], 'a.txt', { type: 'text/plain' })]);
+    } finally { w.fetch = realFetch; }
+    ok('非图片文件直接拒绝，不发上传请求', !netCalled);
+    ok('被拒绝时不改动图片列表', S.images.length === imgBefore,
+       imgBefore + ' -> ' + S.images.length);
+
+    // 空选择不能报错
+    await A.uploadFiles([]);
+    ok('空文件列表安全退出', true);
+
+    // 拖拽提示遮罩：拖入显示、拖出隐藏
+    const mask = d.getElementById('dropMask');
+    ok('拖拽提示遮罩存在', !!mask);
+    if (mask) {
+      const dt = new w.DataTransfer();
+      dt.items.add(new w.File(['x'], 'a.png', { type: 'image/png' }));
+      const ev = t => new w.DragEvent(t, {
+        bubbles: true, cancelable: true, dataTransfer: dt,
+      });
+      w.dispatchEvent(ev('dragenter'));
+      ok('拖入文件时显示遮罩', !mask.classList.contains('hidden'));
+      w.dispatchEvent(ev('dragleave'));
+      ok('拖出后遮罩自动隐藏', mask.classList.contains('hidden'));
+    }
 
     // ---------- 汇总 ----------
     log.unshift('结果：' + pass + ' 通过 / ' + fail + ' 失败\n');

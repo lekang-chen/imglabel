@@ -21,8 +21,10 @@ app.py —— Flask 主程序（后端入口）
   records/           修正记录 + 对比结果
 """
 
+import io
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -62,6 +64,8 @@ app.config["JSON_AS_ASCII"] = False
 # 极具欺骗性，会让人以为是新代码写错了。开发期一律走no-cache。
 app.config["SEND_FILE_MAX_AGE_DEFAULT"] = 0
 app.config["SEND_FILE_MAX_AGE"] = 0
+# 上传接口的请求体上限（一次最多拖 5 张 20MB 的照片也够用）
+app.config["MAX_CONTENT_LENGTH"] = 128 * 1024 * 1024
 
 job_manager = JobManager()
 
@@ -122,6 +126,158 @@ def list_images():
     exts = (".jpg", ".jpeg", ".png", ".bmp")
     return sorted([f for f in os.listdir(IMAGE_DIR)
                    if f.lower().endswith(exts)])
+
+
+# ---------------------------------------------------------------------------
+# 上传：把用户自己的照片放进 data/images/
+# ---------------------------------------------------------------------------
+UPLOAD_EXTS = (".jpg", ".jpeg", ".png", ".bmp", ".webp")
+MAX_UPLOAD_BYTES = 20 * 1024 * 1024   # 单张 20MB，手机照片足够
+MAX_UPLOAD_SIDE = 1920                # 长边超过就等比缩小
+
+
+def _safe_stem(filename):
+    """
+    把上传的文件名变成「安全且还能认出来」的文件名。
+
+    【为什么不用 werkzeug 的 secure_filename】
+    它会把中文整段删掉：'客厅照片.jpg' -> 'jpg'，两个中文名文件会撞成同一个名。
+    这里保留中文、字母、数字、下划线、连字符，其余字符统一换成下划线。
+    """
+    stem = os.path.splitext(os.path.basename(filename or ""))[0]
+    stem = re.sub(r"[^\w\u4e00-\u9fff-]+", "_", stem)
+    stem = stem.strip("_")
+    return stem or "image"
+
+
+def _unique_image_name(stem, ext):
+    """
+    给新图找一个不冲突的文件名。
+
+    【为什么必须防冲突】标注文件是按「文件名去后缀」存的（见 anno_path）。
+    如果新上传的 001.jpg 和已有的 001.png 同名不同后缀，两者会共用
+    一份 001.json，标注直接串在一起。所以这里连标注文件一起检查。
+    """
+    cand = stem + ext
+    n = 2
+    while (os.path.exists(os.path.join(IMAGE_DIR, cand))
+           or os.path.exists(anno_path(cand))):
+        cand = "%s_%d%s" % (stem, n, ext)
+        n += 1
+    return cand
+
+
+def _save_upload(raw_bytes, filename):
+    """
+    校验 + 落盘一张图，返回 (保存的文件名, 宽, 高)。
+
+    三件事必须做，否则后面整条链路都会出问题：
+    1. 用 PIL 真正解一遍——只看后缀会被「改名的 .txt」骗过去；
+    2. 按 EXIF 纠正方向——手机照片常带 Orientation 标记，
+       不纠正的话图在床上躺着，人画出来的多边形也是歪的；
+    3. 长边超过 1920 就等比缩小——4000px 的手机原图在 640 输入下
+       推理慢好几倍，标注时浏览器也扛不住。
+    """
+    from PIL import Image, ImageOps, UnidentifiedImageError
+
+    try:
+        im = Image.open(io.BytesIO(raw_bytes))
+        im.load()
+    except (UnidentifiedImageError, OSError) as exc:
+        raise ValueError("不是可识别的图片（%s）" % exc)
+
+    fmt = (im.format or "").upper()
+    if fmt == "JPG":
+        fmt = "JPEG"
+    if fmt not in ("JPEG", "PNG", "BMP", "WEBP"):
+        raise ValueError("暂不支持 %s 格式" % (fmt or "未知"))
+
+    im = ImageOps.exif_transpose(im)
+
+    if max(im.size) > MAX_UPLOAD_SIDE:
+        ratio = MAX_UPLOAD_SIDE / float(max(im.size))
+        new_size = (max(1, int(im.size[0] * ratio)),
+                    max(1, int(im.size[1] * ratio)))
+        im = im.resize(new_size, Image.LANCZOS)
+
+    # 存盘前统一成能落地的色彩模式
+    if fmt == "JPEG":
+        if im.mode != "RGB":
+            im = im.convert("RGB")
+    elif im.mode == "P":
+        im = im.convert("RGBA" if "transparency" in im.info else "RGB")
+    elif im.mode in ("CMYK", "LAB", "I;16"):
+        im = im.convert("RGB")
+
+    ext = {"JPEG": ".jpg", "PNG": ".png",
+           "BMP": ".bmp", "WEBP": ".webp"}[fmt]
+    name = _unique_image_name(_safe_stem(filename), ext)
+    out_path = os.path.join(IMAGE_DIR, name)
+
+    if fmt == "JPEG":
+        im.save(out_path, "JPEG", quality=92, optimize=True)
+    else:
+        im.save(out_path, fmt)
+
+    return name, im.size[0], im.size[1]
+
+
+@app.route("/api/upload", methods=["POST"])
+def api_upload():
+    """
+    上传照片。前端一次传一张（这样进度条能一张一张走），也支持一次多张。
+
+    表单字段：
+      file —— 文件本体，可重复（多选上传时同名多次）
+    返回：
+      {"ok": true, "saved": [{name,width,height}], "skipped": [{name,reason}]}
+    """
+    files = request.files.getlist("file")
+    if not files:
+        return jsonify({"error": "没有收到文件"}), 400
+
+    saved, skipped = [], []
+    for fs in files:
+        raw_name = fs.filename or ""
+        if not raw_name:
+            continue
+        ext = os.path.splitext(raw_name)[1].lower()
+        if ext not in UPLOAD_EXTS:
+            skipped.append({"name": raw_name,
+                            "reason": "格式不支持（只收 jpg/png/bmp/webp）"})
+            continue
+
+        data = fs.read()
+        if not data:
+            skipped.append({"name": raw_name, "reason": "空文件"})
+            continue
+        if len(data) > MAX_UPLOAD_BYTES:
+            skipped.append({
+                "name": raw_name,
+                "reason": "超过 %d MB" % (MAX_UPLOAD_BYTES // 1024 // 1024),
+            })
+            continue
+
+        try:
+            name, w, h = _save_upload(data, raw_name)
+        except ValueError as exc:
+            skipped.append({"name": raw_name, "reason": str(exc)})
+            continue
+
+        saved.append({"name": name, "width": w, "height": h})
+
+    if saved:
+        st = load_state()
+        log_action(st, "上传图片", "%d 张：%s"
+                   % (len(saved), "、".join(s["name"] for s in saved[:8])))
+        save_state(st)
+
+    return jsonify({
+        "ok": True,
+        "saved": saved,
+        "skipped": skipped,
+        "total_images": len(list_images()),
+    })
 
 
 # ---------------------------------------------------------------------------
@@ -242,7 +398,13 @@ def api_prelabel_start():
     """
     body = request.get_json(silent=True) or {}
     mode = body.get("model", "official")
+    # images 可选：只处理这几张（上传后一键标注就只标新增的，
+    # 不会把已有人工修正的其他图重新覆盖掉）
+    only = body.get("images") or None
     images = list_images()
+    if only:
+        wanted = set(only)
+        images = [n for n in images if n in wanted]
     if not images:
         return jsonify({"error": "data/images/ 目录里没有图片"}), 400
 
@@ -257,9 +419,10 @@ def api_prelabel_start():
             if not os.path.exists(weights):
                 raise FileNotFoundError("找不到自训权重: %s" % weights)
             run_relabel_job(job, IMAGE_DIR, weights,
-                            round_tag="R%d" % (state.get("round", 1) + 1))
+                            round_tag="R%d" % (state.get("round", 1) + 1),
+                            only=only)
         else:
-            run_prelabel_job(job, IMAGE_DIR, CLASSES)
+            run_prelabel_job(job, IMAGE_DIR, CLASSES, only=only)
 
         # 预标注结果写回标注文件（作为草稿）
         for name, res in job.results.items():
@@ -560,20 +723,53 @@ def serve_model(filename):
 # 启动
 # ---------------------------------------------------------------------------
 
-def open_browser():
+def pick_port(preferred=5000, tries=20):
+    """
+    找一个能用端口。
+
+    【为什么需要】一键启动时如果 5000 正被占用（比如上次的窗口没关，
+    或者别的软件占了），app.run 会直接抛 OSError 闪退，
+    用户看到的就是"双击了但窗口一闪而过"，根本不知道发生了什么。
+    这里主动往后找一个空端口，并把实际地址打印出来。
+    """
+    import socket
+    for port in range(preferred, preferred + tries):
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        try:
+            s.bind(("127.0.0.1", port))
+            return port
+        except OSError:
+            continue
+        finally:
+            s.close()
+    return preferred
+
+
+def open_browser(url):
     """延迟 1.2 秒后自动打开浏览器（等服务起来再打开）。"""
     time.sleep(1.2)
     try:
-        webbrowser.open("http://127.0.0.1:5000")
+        webbrowser.open(url)
     except Exception:  # noqa: BLE001
         pass
 
 
 if __name__ == "__main__":
-    print("=" * 60)
-    print("人机协同图像标注系统")
-    print("图片目录: %s" % IMAGE_DIR)
-    print("访问地址: http://127.0.0.1:5000")
-    print("=" * 60)
-    threading.Thread(target=open_browser, daemon=True).start()
-    app.run(host="127.0.0.1", port=5000, debug=False, threaded=True)
+    port = pick_port(5000)
+    url = "http://127.0.0.1:%d" % port
+
+    print("=" * 64)
+    print("  人机协同图像标注系统")
+    print("=" * 64)
+    print("  图片目录 : %s" % IMAGE_DIR)
+    print("  已有图片 : %d 张" % len(list_images()))
+    print("  访问地址 : %s" % url)
+    if port != 5000:
+        print("  说明     : 5000 端口被占用，已自动改用 %d" % port)
+    print("-" * 64)
+    print("  打开页面后，点左上角「上传照片并标注」即可开始。")
+    print("  关闭这个窗口即停止服务。")
+    print("=" * 64)
+
+    threading.Thread(target=open_browser, args=(url,), daemon=True).start()
+    app.run(host="127.0.0.1", port=port, debug=False, threaded=True)

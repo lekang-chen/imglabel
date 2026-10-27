@@ -342,7 +342,7 @@ def mask_box_coverage(mask, box_norm, img_w, img_h):
 # ---------------------------------------------------------------------------
 
 def run_prelabel_job(job, image_dir=None, class_names=None,
-                     conf=0.15, iou_thresh=0.30):
+                     conf=0.15, iou_thresh=0.30, only=None):
     """
     执行一次完整的预标注任务。
 
@@ -350,6 +350,10 @@ def run_prelabel_job(job, image_dir=None, class_names=None,
       job        : PrelabelJob 对象，用于更新进度
       image_dir  : 图片目录
       class_names: 十类词表（英文名）
+      only       : 只处理这些图片名（None = 目录下全部）。
+                   【为什么要有这个】页面上传新图后如果对整目录重跑预标注，
+                   会把之前 150 张图里的人工修正全部覆盖掉。
+                   上传流程只传新文件名，就只会标注新增的那几张。
       conf       : 置信度阈值。取 0.15 而不是常见的 0.25，是实测出来的：
                     在我们这 150 张图上，conf=0.25 只能产出 913 个草稿对象、
                     有 12 张图一个对象都检不出；降到 0.15 后草稿对象涨到 1302 个、
@@ -378,6 +382,9 @@ def run_prelabel_job(job, image_dir=None, class_names=None,
 
     images = sorted([f for f in os.listdir(image_dir)
                      if f.lower().endswith((".jpg", ".jpeg", ".png"))])
+    if only is not None:
+        wanted = set(only)
+        images = [f for f in images if f in wanted]
     job.total = len(images)
 
     results = {}
@@ -612,7 +619,8 @@ def _seg_class_names(seg_model):
 # 用自训模型回标（第二轮迭代）
 # ---------------------------------------------------------------------------
 
-def run_relabel_job(job, image_dir, weights_path, conf=0.40, round_tag="R2"):
+def run_relabel_job(job, image_dir, weights_path, conf=0.40, round_tag="R2",
+                    only=None):
     """
     用自训的 best.pt 重新预标注（回标），形成第二轮迭代。
 
@@ -639,6 +647,9 @@ def run_relabel_job(job, image_dir, weights_path, conf=0.40, round_tag="R2"):
 
     images = sorted([f for f in os.listdir(image_dir)
                      if f.lower().endswith((".jpg", ".jpeg", ".png"))])
+    if only is not None:
+        wanted = set(only)
+        images = [f for f in images if f in wanted]
     job.total = len(images)
     results = {}
 

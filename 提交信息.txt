@@ -114,11 +114,23 @@ Python：3.12.10
 深度学习框架：ultralytics 8.x（PyTorch）
 
 【运行方式】
+方式一（一键启动，评委复现用这个）：
+  双击仓库根目录的 启动.bat
+  脚本会自动：找 Python → 建 .venv（已有则复用）→ 补依赖 → 启动 → 开浏览器
+  首次装依赖约 5-10 分钟，之后启动几秒；5000 被占用会自动换端口
+方式二（命令行）：
   python -m venv .venv
   .venv\Scripts\activate
   pip install -r requirements.txt
   python app.py
-（Windows 下亦可直接双击 启动.bat）
+
+【使用入口：上传照片直接开始】
+  打开页面后，点左上角「上传照片并标注」，选中自己的照片（支持多选），
+  系统会在一次操作里完成：上传入库 → 自动预标注 → 打开第一张新图。
+  也可以把图片直接拖进浏览器窗口任意位置。
+  上传只处理新增的图，不会覆盖已有图片上的人工修正（60 条修正安全）。
+  实现细节：EXIF 方向自动纠正；长边 > 1920 自动等比缩小；
+  同名文件自动加 _2/_3 后缀，且连同标注文件一起查重，杜绝串标注。
 
 【提交物清单】
   源码：app.py / core.py / prelabel.py / exporter.py / train.py / canvas/ / tools/

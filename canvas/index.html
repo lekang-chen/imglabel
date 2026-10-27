@@ -54,8 +54,17 @@
       <span class="muted mono" id="imgCount">0</span>
     </div>
 
+    <div class="upload-box">
+      <input type="file" id="fileInput" accept="image/*" multiple class="hidden-input">
+      <button class="btn btn-primary btn-upload" id="btnUpload">＋ 上传照片并标注</button>
+      <div class="upload-tip">也可把图片直接拖到窗口任意位置</div>
+      <label class="chk upload-auto">
+        <input type="checkbox" id="autoPrelabel" checked> 上传后自动预标注
+      </label>
+    </div>
+
     <div class="tool-row">
-      <button class="btn btn-primary" id="btnPrelabel">预标注</button>
+      <button class="btn" id="btnPrelabel">预标注</button>
       <button class="btn" id="btnRelabel">回标</button>
     </div>
     <div class="tool-row">
@@ -84,8 +93,9 @@
       <canvas id="canvas"></canvas>
       <div class="drawing-tip hidden" id="drawingTip"></div>
       <div class="empty-hint" id="emptyHint">
-        <p>从左侧选择一张图片开始</p>
-        <p class="muted">或先点击「预标注」批量生成草稿</p>
+        <p id="emptyTitle">还没有图片</p>
+        <p class="muted" id="emptySub">把照片拖进这个窗口，或点下面的按钮</p>
+        <button class="btn btn-primary" id="btnUploadEmpty">＋ 上传照片</button>
       </div>
     </div>
 
@@ -177,6 +187,14 @@
 </div>
 
 <div class="toast hidden" id="toast"></div>
+
+<!-- 拖拽上传时的全屏提示 -->
+<div class="drop-mask hidden" id="dropMask">
+  <div class="drop-inner">
+    <div class="drop-icon">⤓</div>
+    <div>松开鼠标，照片加入数据集</div>
+  </div>
+</div>
 
 <script src="/static/geom.js"></script>
 <script src="/static/app.js"></script>

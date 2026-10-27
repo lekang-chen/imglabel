@@ -60,6 +60,10 @@ demo_script.js
 
 # UI 测试临时 harness（由 tools/ui_test.js 自动生成和清理）
 canvas/_ui_harness.html
+# 端到端上传测试自己生成、跑完自动删的临时文件
+canvas/_e2e_harness.html
+canvas/_e2e_src.jpg
+canvas/_e2e_src.png
 
 # 临时备份（体积大，可由tools/rerun_r1.py 重新生成）
 data/annotations_before_shape_fix/
