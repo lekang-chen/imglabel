@@ -110,22 +110,29 @@ def main():
 
     box_map, mask_map, map_source = read_best_map()
 
-    # R2 用的权重已经被 R3 替换掉了，best_metrics.json 现在记的是 R3 的数。
+    # R2 用的权重已经被 R3 替换掉了，best_metrics.json 现在记的是 R4 的数。
     # R2 这一行的 mAP 必须用当时留档的实测值，不能现读——
     # 否则换一次权重，历史行会跟着变，对比表就失去意义了。
     R2_BOX_MAP, R2_MASK_MAP = 0.718, 0.442
+    # R3 同理：它的权重又被 R4（迭代第三轮 + 分类别阈值）替换掉了，
+    # 回标实测数据固化在这里，不再读 round_eval.json（那已经被 R4 覆盖）。
+    R3_BOX_MAP, R3_MASK_MAP = 0.720, 0.568
 
-    # R3（换用冻结主干继续微调的权重）的回标实测数据
-    r3 = None
+    # R3 的回标实测数据（2026-10-27 固化，旧权重 + 统一阈值 0.40）
+    r3 = {"objects": 582, "fix_doc": 292, "fix_rate_doc": 50.2,
+          "precision": 0.498, "recall": 0.469, "dup_pairs": 0}
+
+    # R4（当前 model/best.pt：迭代第三轮 + 分类别置信度阈值）的回标实测
+    r4 = None
     r3_path = os.path.join(BASE_DIR, "data", "round_eval.json")
     if os.path.exists(r3_path):
         try:
             with open(r3_path, encoding="utf-8") as f:
                 cand = json.load(f)
-            if cand.get("round") == "R3":
-                r3 = cand
+            if cand.get("round") == "R4":
+                r4 = cand
         except Exception:  # noqa: BLE001
-            r3 = None
+            r4 = None
 
     os.makedirs(RECORD_DIR, exist_ok=True)
     with open(OUT_CSV, "w", encoding="utf-8-sig", newline="") as f:
@@ -148,12 +155,21 @@ def main():
 
         if r3:
             w.writerow([
-                "R3", "自训权重 (冻结主干继续微调，当前 model/best.pt)",
+                "R3", "自训权重 (冻结主干继续微调)",
                 r3["objects"], r3["fix_doc"], r3["fix_rate_doc"],
                 "%.3f" % r3["precision"], "%.3f" % r3["recall"],
+                R3_BOX_MAP, R3_MASK_MAP,
+                r3["dup_pairs"],
+            ])
+
+        if r4:
+            w.writerow([
+                "R4", "自训权重 (迭代第三轮 + 分类别置信度阈值，当前 model/best.pt)",
+                r4["objects"], r4["fix_doc"], r4["fix_rate_doc"],
+                "%.3f" % r4["precision"], "%.3f" % r4["recall"],
                 "%.3f" % box_map if box_map else "—",
                 "%.3f" % mask_map if mask_map else "—",
-                r3["dup_pairs"],
+                r4["dup_pairs"],
             ])
 
         # 变化量行，方便评委一眼看出趋势
@@ -176,9 +192,21 @@ def main():
                 round(r3["fix_rate_doc"] - r2["fix_rate"] * 100, 1),
                 "%.3f" % (r3["precision"] - r2["precision"]),
                 "%.3f" % (r3["recall"] - r2["recall"]),
-                "%.3f" % (box_map - R2_BOX_MAP) if box_map else "—",
-                "%.3f" % (mask_map - R2_MASK_MAP) if mask_map else "—",
+                "%.3f" % (R3_BOX_MAP - R2_BOX_MAP),
+                "%.3f" % (R3_MASK_MAP - R2_MASK_MAP),
                 r3["dup_pairs"] - r2["dup_pairs"],
+            ])
+        if r4 and r3:
+            w.writerow([
+                "变化", "R4 - R3",
+                r4["objects"] - r3["objects"],
+                r4["fix_doc"] - r3["fix_doc"],
+                round(r4["fix_rate_doc"] - r3["fix_rate_doc"], 1),
+                "%.3f" % (r4["precision"] - r3["precision"]),
+                "%.3f" % (r4["recall"] - r3["recall"]),
+                "%.3f" % (box_map - R3_BOX_MAP) if box_map else "—",
+                "%.3f" % (mask_map - R3_MASK_MAP) if mask_map else "—",
+                r4["dup_pairs"] - r3["dup_pairs"],
             ])
 
     print("已生成", os.path.relpath(OUT_CSV, BASE_DIR))

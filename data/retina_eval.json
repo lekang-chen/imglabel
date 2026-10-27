@@ -1,0 +1,22 @@
+{
+  "weights": "D:\\imglabel\\model\\best.pt",
+  "imgsz": 640,
+  "rows": [
+    {
+      "retina_masks": false,
+      "box_map50": 0.7197,
+      "mask_map50": 0.5677,
+      "box_map": 0.5363,
+      "mask_map": 0.2805,
+      "seconds": 7.1
+    },
+    {
+      "retina_masks": true,
+      "box_map50": 0.7197,
+      "mask_map50": 0.5677,
+      "box_map": 0.5363,
+      "mask_map": 0.2805,
+      "seconds": 3.9
+    }
+  ]
+}

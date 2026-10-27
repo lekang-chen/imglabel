@@ -89,6 +89,91 @@ CONFIGS = {
         epochs=50, patience=18, cos_lr=True, close_mosaic=12,
         desc="从现有 best.pt 继续微调（冻结主干，极小学习率）",
     ),
+
+    # ==================== 第六轮（R4）：增强 + 多轮迭代 ====================
+    # 【为什么改走增强这条路】
+    # 逐类诊断（tools/diag_perclass.py）暴露了两件事：
+    #   1) 十类里有 80% 的标注是「4 点矩形」，也就是早期预标注没给出掩码时
+    #      的矩形兜底。椅子的真实轮廓只占它外接框约四成面积，IoU 天然过不了
+    #      0.5，所以 chair 的掩码 mAP50 卡在 0.20、laptop 卡在 0.00。
+    #      这层天花板靠调超参突破不了。
+    #   2) 能靠训练改善的是检测侧：person 召回 0.478、bottle 0.291、
+    #      laptop 0.333，都是「框找不全」。120 张图的小数据集，提升检测
+    #      最有效的手段是增强，而不是加轮数。
+    # copy_paste 是实例分割专用增强：把一个实例的多边形裁剪下来贴到另一张图上，
+    # 等于不额外采图就扩充了「同一类在不同背景/尺度下」的样本。
+    "cont_aug": dict(
+        base="runs/old_best_r2.pt",
+        freeze=10, lr0=0.0005, lrf=0.05, optimizer="SGD",
+        epochs=80, patience=25, cos_lr=True, close_mosaic=15,
+        copy_paste=0.4, scale=0.6, degrees=5.0,
+        desc="对照 continue：同超参 + copy_paste 增强（看增强本身的净收益）",
+    ),
+    # 在 cont_aug 的基础上放开主干：增强已经把「过拟合 120 张图」的风险压住了，
+    # 让主干也跟着这批数据调整，检测头才有机会学到更贴合本项目的特征。
+    "cont_aug_all": dict(
+        base="runs/old_best_r2.pt",
+        freeze=0, lr0=0.0003, lrf=0.02, optimizer="SGD",
+        epochs=90, patience=30, cos_lr=True, close_mosaic=15,
+        copy_paste=0.4, scale=0.6, degrees=5.0,
+        desc="不冻结主干 + copy_paste 增强（靠增强抗遗忘）",
+    ),
+    # 用户要的「多训练几次」：从当前在用的 best.pt 再来一轮，同策略只降学习率。
+    # 这条线的意义是验证迭代是否还能继续小涨，涨不动就说明已经收敛。
+    "iter2": dict(
+        base="model/best.pt",
+        freeze=10, lr0=0.0003, lrf=0.05, optimizer="SGD",
+        epochs=60, patience=20, cos_lr=True, close_mosaic=12,
+        copy_paste=0.3, scale=0.5,
+        desc="从当前 best.pt 迭代第二轮（降学习率 + 轻增强）",
+    ),
+    # 更激进的一档：强增强 + 长训练 + 提高分类损失权重。
+    # cls 提权是为了压低「明明是椅子却判成沙发」这类跨类混淆，
+    # 它同时能把 bottle / laptop 那些偏低的召回往上抬。
+    "iter3_long": dict(
+        base="model/best.pt",
+        freeze=10, lr0=0.0008, lrf=0.01, optimizer="SGD",
+        epochs=120, patience=40, cos_lr=True, close_mosaic=20,
+        copy_paste=0.5, scale=0.7, degrees=8.0, cls=1.2,
+        desc="强增强 + 120 轮 + 分类损失提权（冲检测召回）",
+    ),
+
+    # ==================== 第七轮（R5）：沿 iter3_long 继续迭代 ====================
+    # iter3_long 是第一条「检测和掩码同时涨」的配置（0.733 / 0.583）。
+    # 既然还在涨，就顺着它往下训几轮，看收益什么时候停。
+    "iter4": dict(
+        base="runs/exp_iter3_long/weights/best.pt",
+        freeze=10, lr0=0.0005, lrf=0.01, optimizer="SGD",
+        epochs=100, patience=35, cos_lr=True, close_mosaic=18,
+        copy_paste=0.5, scale=0.7, degrees=8.0, cls=1.2,
+        desc="沿 iter3_long 继续第三轮（同增强，学习率减半）",
+    ),
+    # 同一配置换一个随机种子重跑。验证集只有 30 张，mAP 的抖动本身就有
+    # 一两个千分点，不做这次复现，就分不清 iter3_long 的涨幅是真提升还是运气。
+    "iter3b": dict(
+        base="model/best.pt", seed=7,
+        freeze=10, lr0=0.0008, lrf=0.01, optimizer="SGD",
+        epochs=120, patience=40, cos_lr=True, close_mosaic=20,
+        copy_paste=0.5, scale=0.7, degrees=8.0, cls=1.2,
+        desc="iter3_long 同配置换种子（检验涨幅是否稳定）",
+    ),
+    # 在 iter3_long 基础上把分类损失和增强都再推一档，
+    # 目标是继续压 bottle / laptop 那几类的漏检。
+    "iter3c": dict(
+        base="runs/exp_iter3_long/weights/best.pt",
+        freeze=10, lr0=0.0006, lrf=0.01, optimizer="SGD",
+        epochs=100, patience=35, cos_lr=True, close_mosaic=18,
+        copy_paste=0.7, scale=0.8, degrees=10.0, cls=1.5,
+        desc="在 iter3_long 上加大增强与分类权重（冲漏检）",
+    ),
+    # 收敛式收尾：强制关掉 mosaic 跑满后段，让模型在真实分布上再稳一稳。
+    "iter4_final": dict(
+        base="runs/exp_iter3_long/weights/best.pt",
+        freeze=10, lr0=0.0003, lrf=0.005, optimizer="SGD",
+        epochs=80, patience=30, cos_lr=True, close_mosaic=40,
+        copy_paste=0.35, scale=0.5, degrees=5.0, cls=1.2,
+        desc="iter4 收尾版：早关 mosaic，最后 40 轮贴近真实分布",
+    ),
 }
 
 
@@ -115,6 +200,8 @@ def run_one(tag):
     imgsz = cfg.pop("imgsz", 640)
     # 起始权重也允许覆盖：有的实验从官方权重起步，有的从现成 best.pt 继续微调
     base = cfg.pop("base", None)
+    # 随机种子允许覆盖，用来做「同配置换种子」的复现实验
+    seed = cfg.pop("seed", 42)
     if base and not os.path.isabs(base):
         base = os.path.join(BASE_DIR, base)
     if base and not os.path.exists(base):
@@ -139,7 +226,7 @@ def run_one(tag):
         name="exp_%s" % tag,
         exist_ok=True,
         pretrained=True,
-        seed=42,
+        seed=seed,
         weight_decay=0.0005,
         # 小数据集：关掉最后几轮的 mosaic，让模型在真实分布上收敛
         close_mosaic=close_mosaic,

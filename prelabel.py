@@ -141,6 +141,48 @@ class JobManager:
 
 _MODELS = {}
 
+# 分类别置信度阈值表（tools/tune_threshold.py 生成）。
+# 文件随权重一起迭代：换一次权重就应该重标一次阈值，
+# 因为换权重后置信度的绝对数值会整体平移。
+_THR_JSON = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                         "data", "class_thresholds.json")
+_thr_cache = None
+
+
+def load_class_thresholds():
+    """读取按类别的置信度阈值表，返回 {类名: 阈值}；文件不存在返回 {}。
+
+    阈值表存在的意义：十类难度差距太大（laptop 22 个训练样本 vs
+    person 174 个），统一阈值必然顾此失彼——对 laptop 是漏检，
+    对 person 是一堆假框。按类各配一个门槛，F1 从 0.722 提到 0.758
+    （150 张全量实测），漏检少 68 个，代价是误检多 47 个；
+    由于漏检的人工成本（手画一笔）远高于误检（点一下删除），
+    这个交换在业务口径上是划算的。
+    """
+    global _thr_cache
+    if _thr_cache is not None:
+        return _thr_cache
+    out = {}
+    try:
+        import json
+        with open(_THR_JSON, encoding="utf-8") as f:
+            data = json.load(f)
+        for v in data.get("per_class", {}).values():
+            name = v.get("name")
+            thr = v.get("threshold")
+            if name and isinstance(thr, (int, float)):
+                out[name] = float(thr)
+    except (OSError, ValueError, TypeError):
+        out = {}
+    _thr_cache = out
+    return out
+
+
+def reset_class_thresholds():
+    """清掉缓存（阈值表文件被更新后调用，主要给测试用）。"""
+    global _thr_cache
+    _thr_cache = None
+
 
 def _load_seg_model():
     """
@@ -412,7 +454,8 @@ def run_prelabel_job(job, image_dir=None, class_names=None,
     return results
 
 
-def _prelabel_one(seg_model, world_model, img_path, class_names, conf, iou_thresh):
+def _prelabel_one(seg_model, world_model, img_path, class_names, conf, iou_thresh,
+                  thr_map=None):
     """
     对单张图片做预标注，返回 Object 列表。
 
@@ -434,8 +477,20 @@ def _prelabel_one(seg_model, world_model, img_path, class_names, conf, iou_thres
     """
     from core import Object
 
+    # --- 第 0 步：按类别的置信度阈值 ------------------------------
+    # 【为什么不用统一阈值】
+    # 十类的难度差得很远：laptop 只有 22 个训练样本，分数天然偏低，
+    # 统一 0.40 会把它们全部砍掉；person 有 174 个样本，模型很有信心，
+    # 0.40 之下混着不少把靠垫当成人的假框。
+    # 阈值表由 tools/tune_threshold.py 在全部 150 张图上按类搜索得到，
+    # 并向全局默认值收缩了 25%（防小样本过拟合）。
+    # 表不存在时退回统一 conf，行为与旧版完全一致。
+    if thr_map is None:
+        thr_map = load_class_thresholds()
+    conf_low = min(thr_map.values()) if thr_map else conf
+
     # --- 第 1 步：实例分割，拿形状 ---
-    seg_out = seg_model.predict(img_path, conf=conf, verbose=False)
+    seg_out = seg_model.predict(img_path, conf=conf_low, verbose=False)
     masks = []
     if seg_out and len(seg_out):
         r = seg_out[0]
@@ -450,7 +505,7 @@ def _prelabel_one(seg_model, world_model, img_path, class_names, conf, iou_thres
                 })
 
     # --- 第 2 步：开放词表检测，拿我们的十类类别 ---
-    world_out = world_model.predict(img_path, conf=conf, verbose=False)
+    world_out = world_model.predict(img_path, conf=conf_low, verbose=False)
     dets = []
     if world_out and len(world_out):
         r = world_out[0]
@@ -462,6 +517,8 @@ def _prelabel_one(seg_model, world_model, img_path, class_names, conf, iou_thres
                                      if cls_id < len(class_names) else "")
                 if cls_name not in class_names:
                     continue
+                if float(r.boxes.conf[i]) < thr_map.get(cls_name, conf):
+                    continue   # 该类阈值没过：宁缺毋滥
                 x1, y1, x2, y2 = r.boxes.xyxy[i].tolist()
                 dets.append({
                     "box_norm": [x1, y1, x2, y2],
@@ -645,6 +702,11 @@ def run_relabel_job(job, image_dir, weights_path, conf=0.40, round_tag="R2",
     model = YOLO(weights_path)
     seg_names = dict(model.names)
 
+    # 分类别阈值：换权重后置信度整体平移，逐类重标（见 tools/tune_threshold.py）。
+    # predict 用全表最低阈值先放宽召回，再按各类门槛过滤。
+    thr_map = load_class_thresholds()
+    conf_low = min(thr_map.values()) if thr_map else conf
+
     images = sorted([f for f in os.listdir(image_dir)
                      if f.lower().endswith((".jpg", ".jpeg", ".png"))])
     if only is not None:
@@ -657,19 +719,23 @@ def run_relabel_job(job, image_dir, weights_path, conf=0.40, round_tag="R2",
         img_path = os.path.join(image_dir, img_name)
         job.advance(img_name, "%s 回标 %d/%d" % (round_tag, job.done + 1, len(images)))
         try:
-            out = model.predict(img_path, conf=conf, verbose=False)
+            out = model.predict(img_path, conf=conf_low, verbose=False)
             objs = []
             if out and len(out):
                 r = out[0]
                 if r.masks is not None:
                     for i2, m in enumerate(r.masks.data):
+                        cls_id = int(r.boxes.cls[i2])
+                        cls_name = seg_names.get(cls_id, "")
+                        if cls_name not in CLASSES:
+                            continue
+                        # 该类阈值没过：丢掉。阈值表缺这一类时用统一 conf。
+                        if float(r.boxes.conf[i2]) < thr_map.get(cls_name, conf):
+                            continue
                         poly = mask_to_polygon(m.cpu().numpy())
                         if not poly:
                             continue
-                        cls_id = int(r.boxes.cls[i2])
-                        cls_name = seg_names.get(cls_id, "")
-                        if cls_name in CLASSES:
-                            objs.append(Object(cls_name, poly, source="model"))
+                        objs.append(Object(cls_name, poly, source="model"))
             # 同类去重：自训模型同样会对同一个物体吐出多个重叠掩码，
             # 不去重的话 R2 反而比 R1 重复更多，修正率就降不下来。
             objs = _dedup_same_class(objs, iou_thresh=0.55)

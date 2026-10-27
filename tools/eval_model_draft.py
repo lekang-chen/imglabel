@@ -192,7 +192,7 @@ def score_at(per_image, thr):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--split", default="val", choices=["train", "val"])
-    ap.add_argument("--imgs", default=None, help="候选权重，可传多个")
+    ap.add_argument("--imgs", nargs="+", default=None, help="候选权重，可传多个")
     args = ap.parse_args()
 
     from ultralytics import YOLO
