@@ -104,6 +104,7 @@ data/annotations/2.json
 data/annotations/3.json
 data/annotations/IMG_8072.json
 data/annotations/IMG_8073.json
+data/annotations/IMG_8073_2.json
 
 # 手动备份目录（排查事故用，确认无碍后删）
 data/_bak_ann_*/

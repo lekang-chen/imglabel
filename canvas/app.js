@@ -199,7 +199,19 @@ async function loadImages() {
   renderImageList();
   renderTrashBar();
   updateEmptyHint();
+  syncPrelabelBtn();
   await refreshRate();
+}
+
+/** 预标注按钮上标出待标张数——点之前就能看出这次会处理几张。 */
+function syncPrelabelBtn() {
+  const btn = $('btnPrelabel');
+  if (!btn) return;
+  const n = S.images.filter(i => !i.reviewed).length;
+  btn.textContent = n ? `预标注 (${n})` : '预标注';
+  btn.title = n
+    ? `只给还没有标注的 ${n} 张图生成草稿，其余图不动`
+    : '全部图片都已有标注；点了会先问是否重做全部';
 }
 
 /** 有删除记录时，在列表上方显示一条可恢复的提示。 */
@@ -1612,40 +1624,55 @@ function bindDropUpload() {
 }
 
 // ---------------------------------------------------------------- 预标注
+/** 还没有标注文件的图（列表里状态显示「—」的那些）。 */
+function pendingDrafts() {
+  return S.images.filter(i => !i.reviewed).map(i => i.name);
+}
+
 async function startPrelabel(opts) {
   const o = opts || {};
-  // images 有值 = 只处理这几张；为空 = 处理全部
-  const only = Array.isArray(o.images) && o.images.length ? o.images : null;
-  const scope = only ? `${only.length} 张新图` : '全部图片';
+  if (!S.images.length) { toast('还没有图片，先上传照片', true); return; }
 
-  if (!only && !S.images.length) { toast('还没有图片，先上传照片', true); return; }
-
-  // 全量预标注会重写全部标注文件，人工修正跟着没。
-  // 原先这句 confirm 只写「生成草稿」，用户根本看不出修正会丢——
-  // 结果在电脑上点了一下「预标注」，60 条修正被覆盖（2026-10-28）。
+  // 显式指定（上传后自动预标注）→ 只处理这几张；
+  // 否则 → 只处理「还没有标注文件」的图。
+  //
+  // 【为什么默认不是全部】
+  // 用户点「预标注」的本意是「给我刚传的图配上草稿」，不是「把 150 张
+  // （里面有 60 条人工修正）全部重做一遍」。旧版一律全量，一次误点就把修正
+  // 冲掉了（见 ai_log 第十六轮）。按钮上会显示待标张数，点之前就知道范围。
+  const given = Array.isArray(o.images) && o.images.length ? o.images : null;
+  const pending = pendingDrafts();
+  const only = given || (pending.length ? pending : null);
   const editedTotal = S.images.reduce((s, i) => s + (i.edited || 0), 0);
+
   if (!o.silent) {
     let msg;
     if (only) {
-      msg = `将用官方预训练权重对${scope}生成草稿。\n\n`
-          + '只影响新上传的图，已修正的其他图不会被覆盖。\n\n';
+      const head = only.slice(0, 3).join('、')
+                 + (only.length > 3 ? ` 等 ${only.length} 张` : '');
+      msg = `将用官方预训练权重对 ${only.length} 张图生成草稿：${head}\n\n`
+          + `其余 ${S.images.length - only.length} 张已有标注的图`
+          + (editedTotal ? `（含 ${editedTotal} 条人工修正）` : '')
+          + '完全不动。\n\n';
     } else if (editedTotal > 0) {
-      msg = `⚠ 当前有 ${editedTotal} 条人工修正。\n\n`
-          + '全量预标注会重写全部标注文件，这些修正会被清除，且无法撤销。\n'
+      msg = `全部 ${S.images.length} 张图都已有标注，其中 ${editedTotal} 条人工修正。\n\n`
+          + '⚠ 重做全部会重写每一个标注文件，这些修正会被清除，且无法撤销。\n'
           + '（records/修正记录.csv 的历史记录还在，'
           + '但图上的修改会回到模型原始输出）\n\n';
     } else {
-      msg = `将用官方预训练权重对${scope}生成草稿。\n\n`;
+      msg = `全部 ${S.images.length} 张图都已有标注。\n\n`
+          + '重做全部会覆盖现有标注文件（当前没有人工修正，只是回到模型草稿）。\n\n';
     }
-    if (!confirm(msg + '确定继续？')) return;
+    const ask = only ? '确定继续？' : '确定对全部图片重新生成草稿吗？';
+    if (!confirm(msg + ask)) return;
   }
 
   $('progressWrap').classList.remove('hidden');
   try {
     const r = await api('/api/prelabel/start', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      // force=true 表示「用户已经在弹窗里确认过覆盖」，服务端据此放行
-      body: JSON.stringify({ model: 'official', images: only, force: true }),
+      // force 只在「全量重做、且用户已在弹窗确认」时才带；服务端靠它放行覆盖闸门
+      body: JSON.stringify({ model: 'official', images: only, force: !only }),
     });
     pollProgress(r.job_id, 'official', o.pickAfter || null);
   } catch (e) { toast('启动失败: ' + e.message, true); }
@@ -1856,6 +1883,8 @@ window.__APP__ = {
   deleteImage, restoreImages, clearStage, renderImageList, renderTrashBar,
   // 框选修形：测试要验证三种模式对轮廓的影响
   applyBoxShape, syncBoxHint,
+  // 预标注范围：测试要验证「只标没有标注的图」这条规则与按钮上的数字
+  pendingDrafts, syncPrelabelBtn,
   // 窄屏抽屉：测试要验证「开一边自动收另一边」和遮罩点击关闭
   toggleDrawer, closeDrawers,
 };

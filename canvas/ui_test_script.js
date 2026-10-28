@@ -721,6 +721,36 @@
       A.draw();
     }
 
+    // ---------- T15 预标注的范围：只标「还没有标注文件」的图 ----------
+    // 【为什么值得单测】这个按钮原先一律全量，一次误点把 60 条人工修正冲掉了
+    // （ai_log 第十六轮）。规则很容易被改回去，所以钉在测试里：
+    // 没有标注文件的才算待标；文件存在但 0 对象的（用户确认过这张图没有目标物）
+    // 不重做——否则每次点预标注都会把那 10 张空图又灌上模型误检。
+    {
+      const keep = S.images;
+      S.images = [
+        { name: 'a.jpg', reviewed: true, total: 3, edited: 1 },
+        { name: 'b.jpg', reviewed: true, total: 0, edited: 0 },
+        { name: 'c.jpg', reviewed: false, total: 0, edited: 0 },
+        { name: 'd.jpg', reviewed: false, total: 0, edited: 0 },
+      ];
+      const pend = A.pendingDrafts();
+      ok('只有缺标注文件的图才算待标', pend.join(',') === 'c.jpg,d.jpg',
+         pend.join(','));
+
+      A.syncPrelabelBtn();
+      const btn = d.getElementById('btnPrelabel');
+      ok('按钮上标出待标张数', btn.textContent === '预标注 (2)', btn.textContent);
+
+      S.images = [{ name: 'a.jpg', reviewed: true, total: 3, edited: 0 }];
+      A.syncPrelabelBtn();
+      ok('全部已有标注时按钮不带数字', btn.textContent === '预标注',
+         btn.textContent);
+
+      S.images = keep;
+      A.syncPrelabelBtn();
+    }
+
     // ---------- 汇总 ----------
     log.unshift('结果：' + pass + ' 通过 / ' + fail + ' 失败\n');
     return log.join('\n');
