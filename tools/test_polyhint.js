@@ -58,8 +58,10 @@ fs.writeFileSync(HARNESS, `<!DOCTYPE html><html><head><meta charset="utf-8">
   const c = w.document.getElementById('canvas');
   const r = c.getBoundingClientRect();
   for (const [x, y] of [[0.30,0.30],[0.50,0.30],[0.50,0.50],[0.35,0.50]]) {
-    c.dispatchEvent(new w.MouseEvent('mousedown', { bubbles: true,
-      clientX: r.left + r.width * x, clientY: r.top + r.height * y, button: 0 }));
+    // 画布监听的是 Pointer Events，MouseEvent 不会触发 pointerdown
+    c.dispatchEvent(new w.PointerEvent('pointerdown', { bubbles: true,
+      clientX: r.left + r.width * x, clientY: r.top + r.height * y, button: 0,
+      pointerId: 1, pointerType: 'mouse', isPrimary: true }));
     await new Promise(r2 => setTimeout(r2, 200));
   }
   await new Promise(r2 => setTimeout(r2, 600));

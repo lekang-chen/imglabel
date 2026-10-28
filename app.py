@@ -897,7 +897,7 @@ def serve_model(filename):
 # 启动
 # ---------------------------------------------------------------------------
 
-def pick_port(preferred=5000, tries=20):
+def pick_port(preferred=5000, tries=20, host="127.0.0.1"):
     """
     找一个能用端口。
 
@@ -905,18 +905,42 @@ def pick_port(preferred=5000, tries=20):
     或者别的软件占了），app.run 会直接抛 OSError 闪退，
     用户看到的就是"双击了但窗口一闪而过"，根本不知道发生了什么。
     这里主动往后找一个空端口，并把实际地址打印出来。
+
+    host 要和实际监听地址一致：手机访问时监听 0.0.0.0，
+    如果还按 127.0.0.1 探端口，别的网卡占着同一个端口就探不出来。
     """
     import socket
     for port in range(preferred, preferred + tries):
         s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         try:
-            s.bind(("127.0.0.1", port))
+            s.bind((host, port))
             return port
         except OSError:
             continue
         finally:
             s.close()
     return preferred
+
+
+def lan_ip():
+    """
+    拿本机在局域网里的 IP，给手机访问用。
+
+    【为什么不是 gethostbyname(gethostname())】
+    那套在装了虚拟机/VPN 的机器上经常返回 127.0.0.1 或虚拟网卡地址。
+    往 8.8.8.8 建一个 UDP socket 不会真的发包，只是让系统按路由表
+    选出"默认出口网卡"的地址——这正是手机该连的那个。
+    """
+    import socket
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        s.connect(("8.8.8.8", 80))
+        ip = s.getsockname()[0]
+        return ip if ip and not ip.startswith("127.") else "127.0.0.1"
+    except OSError:
+        return "127.0.0.1"
+    finally:
+        s.close()
 
 
 def open_browser(url):
@@ -929,7 +953,12 @@ def open_browser(url):
 
 
 if __name__ == "__main__":
-    port = pick_port(5000)
+    # --lan：监听 0.0.0.0，让同一 Wi-Fi 下的手机/平板也能打开。
+    # 默认只监听本机，避免把标注系统暴露到公共网络上。
+    lan = ("--lan" in sys.argv) or (os.environ.get("IMGLABEL_LAN") == "1")
+    host = "0.0.0.0" if lan else "127.0.0.1"
+
+    port = pick_port(5000, host=host)
     url = "http://127.0.0.1:%d" % port
 
     print("=" * 64)
@@ -940,10 +969,19 @@ if __name__ == "__main__":
     print("  访问地址 : %s" % url)
     if port != 5000:
         print("  说明     : 5000 端口被占用，已自动改用 %d" % port)
-    print("-" * 64)
+    if lan:
+        ip = lan_ip()
+        if ip == "127.0.0.1":
+            print("  手机访问 : 没找到局域网地址，检查是否连了 Wi-Fi")
+        else:
+            print("-" * 64)
+            print("  手机访问 : http://%s:%d" % (ip, port))
+            print("             ↑ 手机连同一个 Wi-Fi，浏览器输这个地址")
+            print("             （Windows 弹防火墙提示要点「允许」）")
+            print("-" * 64)
     print("  打开页面后，点左上角「上传照片并标注」即可开始。")
     print("  关闭这个窗口即停止服务。")
     print("=" * 64)
 
     threading.Thread(target=open_browser, args=(url,), daemon=True).start()
-    app.run(host="127.0.0.1", port=port, debug=False, threaded=True)
+    app.run(host=host, port=port, debug=False, threaded=True)

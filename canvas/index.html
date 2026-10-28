@@ -43,6 +43,19 @@
       <span class="stat-value" id="statRate">—</span>
     </div>
   </div>
+  <!-- 窄屏（手机/平板竖屏）才显示：左右两栏收成抽屉，用这两个按钮呼出。
+       手机顶栏宽度紧张，这里只用图标 + title 提示，不放文字。
+       图标用内联 SVG 而不是 ☰ / ⚙ 这类字符：部分设备（含无头浏览器）
+       缺这些字形，会渲染成一个方框，看起来像按钮坏了。 -->
+  <div class="mobile-nav">
+    <button class="mini-btn" id="btnLeftDrawer" title="图片列表" aria-label="图片列表">
+      <svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true">
+        <path d="M1 3h12M1 7h12M1 11h12" stroke="currentColor" stroke-width="1.6"
+              stroke-linecap="round" fill="none"/>
+      </svg>
+    </button>
+    <button class="mini-btn" id="btnRightDrawer" title="对象属性" aria-label="对象属性">属性</button>
+  </div>
 </header>
 
 <div class="layout">
@@ -213,6 +226,9 @@
     <div>松开鼠标，照片加入数据集</div>
   </div>
 </div>
+
+<!-- 抽屉遮罩：点一下关闭左/右栏（窄屏专用） -->
+<div class="drawer-mask" id="drawerMask" hidden></div>
 
 <script src="/static/geom.js"></script>
 <script src="/static/app.js"></script>

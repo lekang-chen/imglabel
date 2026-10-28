@@ -1128,3 +1128,85 @@ SAM 那条路尤其值得记：它看起来最像解药（78MB、3.4 秒），�
 演示截图：`demo/07_框选修形_前.png`（半条沙发）、`07_框选修形_拖框中.png`
 （拉框选中整条沙发，并入模式高亮）、`07_框选修形_后.png`（补全到整条 + 面板
 显示顶点数与「已修正」），由 `tools/shoot_boxrefine.py` 一键重拍。
+
+## 第十四轮：手机端适配——从"只能用电脑"到"同一个 Wi-Fi 就能标"
+
+用户问「手机上能用吗」。查下来三条硬限制：服务只监听 `127.0.0.1`、
+画布只认 `mousedown/mousemove/mouseup`、三栏固定宽度没有断点。
+本轮全部解决，并顺手挖出三个潜伏的工程问题。
+
+### 做法
+
+**1. 后端开局域网**（`app.py`）
+新增 `--lan` 参数：监听地址从 `127.0.0.1` 换成 `0.0.0.0`，启动时用
+「往 8.8.8.8 建 UDP socket 但不定包」的方式取出默认出口网卡的 IP 打印出来
+——比 `gethostbyname(gethostname())` 可靠，后者在装过虚拟机/VPN 的机器上
+经常返回 `127.0.0.1` 或虚拟网卡地址。默认仍只监听本机，不把标注系统暴露到公共网络。
+
+**2. 前端换 Pointer Events**（`canvas/app.js`）
+`mousedown/mousemove/mouseup` → `pointerdown/pointermove/pointerup/pointercancel`，
+一套代码同时覆盖鼠标、手指、触控笔。配套三处细节：
+
+- `move/up` 从 canvas 挪到 window：拖出画布再松手也能收到。
+  挂 canvas 上的话手指滑出边界就丢 up，画笔会一直停在「涂抹中」。
+- 多指按住时只认第一根（`S.pointerId`），否则两指会各拖一个框、坐标互相打架。
+- 触摸没有 `e.detail`（双击计数），双击闭合自己判定：320ms 内 + 12px 内。
+  阈值只有 12px 是因为描边时会快速点相邻顶点，放宽到 30px 就会误闭合。
+
+**3. 窄屏抽屉**（`style.css` + `index.html`）
+`max-width: 900px` 断点：左右两栏改成覆盖式抽屉（`position: fixed` + 位移过渡），
+画布独占整屏，右下角两个 46px 圆形按钮呼出，点遮罩或再点一次收起。
+选中图片后自动关左抽屉（`selectImage` 里调 `closeDrawers`），否则画布一直被盖着。
+
+### 三个坑（都值钱）
+
+**坑一：`canvas/demo_script.js` 残留，把 UI 测试搞崩了。**
+
+症状：测试跑到一半 `Cannot read properties of null (reading 'width')`，
+而报错位置（`toCanvas` 读 `S.img.width`）和真实原因毫无关系。
+查了 `S.current` 莫名是 `2.jpg`、`S.img` 为空、`S.anno` 却有 5 个对象，
+最后在 `selectImage` 里临时打了调用栈，才看到凶手是
+`/static/demo_script.js` —— 上一轮拍「框选修形」截图时生成的临时注入脚本，
+跑完没删，而它会被**任何**带 `?uitest=1` 的页面自动加载，抢着选图、切工具。
+
+修法：`shoot_scripted()` 里用 `try/finally` 删；`.gitignore` 里把
+`canvas/{demo,stroke,polyhint}_script.js` 全挡掉。
+**教训：往应用目录写临时文件，清理必须放 finally——调用方可能中途抛异常，
+也可能根本不是原来那个 main。**
+
+**坑二：`.mini-btn { flex: 1 }` 让浮动按钮塌成 0×0。**
+
+抽屉入口最初放顶栏，390px 宽的屏上被挤到视口外（DOM 里在、computedStyle
+显示 `display:flex`、`visibility:visible`，但截图里就是没有）。
+改成右下角浮动按钮后**还是看不见**。最后用一个洋红色背景块做二分：
+nav 容器加宽高能显示、子按钮不显示 → 问题在子元素尺寸。
+根因是 `.mini-btn` 自带的 `flex: 1`（`flex-basis: 0`），在竖向 flex 容器里
+把主轴（高度）算成 0，父容器跟着塌成 0×0。
+修法：容器写死 `width: 46px`，子按钮 `flex: none` + 显式宽高。
+
+**坑三：无头浏览器截不到 `position: fixed`。**
+
+修好之后截图**依然**看不到按钮，但用固定尺寸的 iframe 加载同一页面、
+读 `getBoundingClientRect()` 却是 `x=334, y=678, 46×46` 完全正确。
+结论是 `--headless --screenshot` 对 fixed 元素的定位受截图视口影响，
+窗口尺寸模式下会把元素放到"截图视口底部"之外。
+**所以演示图改用固定尺寸 iframe 渲染后再裁剪**（`tools/shoot_mobile.py`），
+这样 fixed 相对 iframe 定位，稳定可复现。
+
+### 顺带修的两个真问题
+
+- **触摸设备没有 hover**：`.img-del { opacity: 0 }` + `:hover` 显形，
+  在手机上等于永远不显示，根本删不掉照片。加 `@media (hover: none) { opacity: 1 }`。
+- **README 两处描述的功能不存在**：「再拖几个顶点贴合」—— 代码里没有顶点拖拽。
+  已改成实际可行的手法（挖掉 / 画笔补）。文档写了一个没做的功能，
+  比少写一句危险得多。
+
+### 测试
+
+216 项全绿（核心 68 + 几何 33 + 交互 **90** + 上传 7 + 删除 18）。
+交互层新增 15 项，覆盖：抽屉开关与互斥、遮罩关闭、`touch-action: none`、
+触摸描边、触摸双击闭合、多指不抢占。
+测试辅助函数 `fire()` 里加了 mouse → pointer 的映射，原有 75 项断言一行没改。
+
+演示图：`demo/08_手机竖屏.png`、`demo/09_手机_图片抽屉.png`，
+由 `python tools/shoot_mobile.py` 一键重拍。

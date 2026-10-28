@@ -30,6 +30,7 @@ background:#fff;font:11px monospace;padding:6px;z-index:9;border:1px solid #000;
 const fr = document.getElementById('fr');
 fr.onload = async () => {
   const w = fr.contentWindow, d = fr.contentDocument;
+  const report = document.getElementById('report');
   // 等主页面初始化完
   for (let i = 0; i < 40; i++) {
     if (w.__APP__ && w.__APP__.S && w.__APP__.S.images.length) break;
@@ -37,9 +38,11 @@ fr.onload = async () => {
   }
   try {
     const out = await w.__runUiTests(d, w);
-    document.getElementById('report').textContent = out;
+    report.textContent = out;
   } catch (e) {
-    document.getElementById('report').textContent = 'FATAL: ' + (e && e.stack || e);
+    // 崩了也要把已跑过的日志带出来，否则只知道"崩了"不知道崩在哪
+    const done = (w.__UITEST_LOG__ || []).join('\\n');
+    report.textContent = (done ? done + '\\n\\n' : '') + 'FATAL: ' + (e && e.stack || e);
   }
 };
 </script>

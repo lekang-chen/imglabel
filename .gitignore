@@ -82,3 +82,9 @@ data/_trash/
 
 # 单图诊断脚本生成的对比图（tools/diag_one_image.py 等，运行期产物）
 data/_diag/
+
+# 截图脚本往 canvas/ 写的临时注入脚本（由 tools/shoot_*.py 生成，用完即删）。
+# 残留会让 ?uitest=1 的页面自动加载它们，干扰 UI 自动化测试。
+canvas/demo_script.js
+canvas/stroke_script.js
+canvas/polyhint_script.js

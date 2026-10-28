@@ -25,10 +25,24 @@
 (function () {
   'use strict';
 
+  // 【为什么要把 mouse* 映射成 pointer*】
+  // 画布改成监听 Pointer Events（鼠标和触摸共用一套逻辑）之后，
+  // MouseEvent 不会再触发 pointerdown。这里在派发时顺手发一次同义的 pointer 事件，
+  // 测试里"按下-移动-抬起"的写法就不用逐个改。
+  const POINTER_OF = { mousedown: 'pointerdown', mousemove: 'pointermove', mouseup: 'pointerup' };
+
   function fire(w, d, el, type, opts) {
     const r = el.getBoundingClientRect();
     const o = Object.assign({ bubbles: true, cancelable: true, view: w,
       clientX: r.left + r.width / 2, clientY: r.top + r.height / 2 }, opts || {});
+    const ptype = POINTER_OF[type];
+    if (ptype && w.PointerEvent) {
+      el.dispatchEvent(new w.PointerEvent(ptype, Object.assign({}, o, {
+        pointerId: 1, pointerType: 'mouse', isPrimary: true,
+        button: o.button || 0, buttons: type === 'mouseup' ? 0 : 1,
+      })));
+      return;
+    }
     el.dispatchEvent(new w.MouseEvent(type, o));
   }
 
@@ -43,6 +57,8 @@
 
   window.__runUiTests = async function (d, w) {
     const log = [];
+    // 把 log 挂到 window 上：万一中途 FATAL，报告里也能看到跑到哪一步了
+    w.__UITEST_LOG__ = log;
     let pass = 0, fail = 0;
     function ok(name, cond, extra) {
       if (cond) { pass++; log.push('  PASS  ' + name); }
@@ -67,7 +83,16 @@
       if (withObj) {
         try { await A.selectImage(withObj.name); }
         catch (e) { log.push('selectImage 抛错: ' + (e && e.stack || e)); }
-        await new Promise(r => setTimeout(r, 1000));
+        // 【为什么不能固定 sleep】图片列表涨到 150+ 张后，缩略图会占满
+        // 浏览器对同一域名的并发连接（HTTP/1.1 只有 6 条），主图要排队，
+        // 加载时间忽快忽慢：等 1 秒有时够、有时不够，就会出现
+        // 「anno 有了但 S.img 还没 onload」，后面 toCanvas 读 S.img.width 直接崩。
+        // 改成轮询到主图真正解码完成，判断依据是 naturalWidth。
+        for (let i = 0; i < 80; i++) {
+          if (A.S.img && A.S.img.naturalWidth > 0) break;
+          await new Promise(r => setTimeout(r, 100));
+        }
+        if (!A.S.img) return 'FATAL: 主图未加载完（S.img 为空）: ' + withObj.name;
       }
     }
     if (!A.S.anno) return 'FATAL: 选图后 A.S.anno 仍为空';
@@ -582,6 +607,118 @@
       S.anno.objects = [];
       S.selectedId = null;
       S.undoStack.length = 0;
+    }
+
+    // ---------- T14 手机 / 平板：抽屉 + 触摸标注 ----------
+    {
+      // 抽屉按钮在桌面视口被 CSS 隐藏，但元素和状态逻辑必须在
+      const bL = d.getElementById('btnLeftDrawer');
+      const bR = d.getElementById('btnRightDrawer');
+      const mask = d.getElementById('drawerMask');
+      const pL = d.querySelector('.panel-left');
+      const pR = d.querySelector('.panel-right');
+      ok('窄屏入口存在（图片 / 属性两个按钮）', !!bL && !!bR);
+      ok('初始状态两栏都没展开',
+         !pL.classList.contains('open') && !pR.classList.contains('open'));
+
+      bL.click();
+      await new Promise(r => setTimeout(r, 60));
+      ok('点「图片」展开左栏', pL.classList.contains('open'));
+      ok('抽屉展开时遮罩同步显示', mask.hidden === false);
+
+      bR.click();
+      await new Promise(r => setTimeout(r, 60));
+      ok('点「属性」展开右栏', pR.classList.contains('open'));
+      ok('打开一边自动收起另一边（不会同时压住画布）',
+         !pL.classList.contains('open'));
+
+      bR.click();                      // 再点一次 = 收起
+      await new Promise(r => setTimeout(r, 260));
+      ok('再点同一个按钮收起抽屉',
+         !pR.classList.contains('open') && mask.hidden === true);
+
+      bL.click();
+      await new Promise(r => setTimeout(r, 60));
+      mask.click();
+      await new Promise(r => setTimeout(r, 260));
+      ok('点遮罩能关闭抽屉',
+         !pL.classList.contains('open') && mask.hidden === true);
+    }
+
+    {
+      const cvT = d.getElementById('canvas');
+      // 不关掉浏览器默认手势，手指一涂整页会跟着滚，pointermove 还会被系统夺走
+      ok('画布禁用了浏览器默认触摸手势',
+         w.getComputedStyle(cvT).touchAction === 'none',
+         w.getComputedStyle(cvT).touchAction);
+
+      S.anno.objects = [];
+      S.selectedId = null;
+      S.undoStack.length = 0;
+      S.edits = [];
+      S.focusMode = false;
+      S.draftPts = [];
+      S.drawing = false;
+      const cwr = cvT.getBoundingClientRect();
+
+      // 用 PointerEvent + pointerType:'touch' 模拟手指
+      function touch(type, nx, ny, pid) {
+        const p = A.toCanvas(nx, ny);
+        cvT.dispatchEvent(new w.PointerEvent(type, {
+          bubbles: true, cancelable: true, view: w,
+          clientX: cwr.left + p[0], clientY: cwr.top + p[1],
+          pointerId: pid || 11, pointerType: 'touch', isPrimary: true,
+          button: 0, buttons: type === 'pointerup' ? 0 : 1,
+        }));
+      }
+      function tap(nx, ny) { touch('pointerdown', nx, ny); touch('pointerup', nx, ny); }
+
+      // 1) 触摸描边：三个点落下
+      d.querySelector('.tool-btn[data-tool="polygon"]').click();
+      tap(0.30, 0.30); tap(0.55, 0.30); tap(0.55, 0.55);
+      ok('触摸能画多边形（三个点已落下）',
+         S.drawing && S.draftPts.length === 3, 'draftPts=' + S.draftPts.length);
+
+      // 2) 同一位置快速点两下 = 双击闭合（触摸没有 e.detail，靠手势判断）
+      tap(0.40, 0.60); tap(0.40, 0.60);
+      await new Promise(r => setTimeout(r, 60));
+      ok('触摸双击能闭合多边形', !S.drawing, 'drawing=' + S.drawing);
+      // 闭合后和鼠标路径一样弹类别框，点一个类别才算真的落地
+      const pick = d.querySelector('#clsPick button');
+      ok('触摸闭合后弹出类别选择框', !!pick);
+      if (pick) pick.click();
+      await new Promise(r => setTimeout(r, 60));
+      ok('选完类别生成了对象', S.anno.objects.length === 1,
+         'objects=' + S.anno.objects.length);
+
+      // 3) 触摸选中：点在对象质心上
+      const obj = S.anno.objects[0];
+      if (obj) {
+        const cx = obj.polygon.reduce((s, p) => s + p[0], 0) / obj.polygon.length;
+        const cy = obj.polygon.reduce((s, p) => s + p[1], 0) / obj.polygon.length;
+        d.querySelector('.tool-btn[data-tool="select"]').click();
+        S.selectedId = null;
+        tap(cx, cy);
+        ok('触摸能选中对象', S.selectedId === obj.id,
+           'selected=' + S.selectedId);
+
+        // 4) 多指：第一根按在空白处，第二根按在对象上 —— 不许抢走选中
+        S.selectedId = null;
+        touch('pointerdown', 0.05, 0.05);           // 第一根（空白）
+        touch('pointerdown', cx, cy, 12);           // 第二根（对象上）
+        ok('第二根手指被忽略，不会抢走操作',
+           S.selectedId === null, 'selected=' + S.selectedId);
+        touch('pointerup', 0.05, 0.05);
+      }
+
+      // 收尾：清干净，避免影响后面的汇总统计
+      S.anno.objects = [];
+      S.selectedId = null;
+      S.undoStack.length = 0;
+      S.edits = [];
+      S.draftPts = [];
+      S.drawing = false;
+      A.draw();
     }
 
     // ---------- 汇总 ----------

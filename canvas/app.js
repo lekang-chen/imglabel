@@ -36,6 +36,7 @@ const S = {
   brushMask: null,         // 画笔位图掩码 {id, cv, cx, w, h, k}
   scratch: null,           // 画笔着色暂存画布
   mouse: { x: 0, y: 0, in: false },
+  pointerId: null,        // 正在按下的指针 id（触摸时用来忽略第二根手指）
   drawing: false,         // 多边形绘制中
   draftPts: [],           // 多边形草稿点
   painting: false,        // 画笔涂抹中
@@ -379,9 +380,46 @@ async function restoreImages() {
 }
 
 // ---------------------------------------------------------------- 选图
+/* ---------------------------------------------------------------------------
+ * 窄屏抽屉（手机 / 平板竖屏）
+ *
+ * 【为什么交给 JS 而不是纯 CSS】
+ * 需要「打开一边自动收起另一边」和「点遮罩关闭」两个状态判断，
+ * 用 JS 十几行就说清楚了；纯 CSS 得靠 :target 或 checkbox hack，反而绕。
+ * 桌面端左右栏是常驻的，这些函数调用不会产生任何视觉变化。
+ * ------------------------------------------------------------------------- */
+
+function closeDrawers() {
+  const open = document.querySelectorAll('.panel-left.open, .panel-right.open');
+  if (!open.length) return;
+  open.forEach(p => p.classList.remove('open'));
+  const mask = $('drawerMask');
+  mask.classList.remove('show');
+  // 等淡出动画走完再真正隐藏，否则遮罩会瞬间消失、抽屉还在滑
+  setTimeout(() => {
+    if (!document.querySelector('.panel-left.open, .panel-right.open')) mask.hidden = true;
+  }, 200);
+}
+
+function toggleDrawer(side) {
+  const target = document.querySelector(side === 'left' ? '.panel-left' : '.panel-right');
+  if (!target) return;
+  const wasOpen = target.classList.contains('open');
+  closeDrawers();
+  if (wasOpen) return;              // 再点一次同一个按钮 = 收起
+  target.classList.add('open');
+  const mask = $('drawerMask');
+  mask.hidden = false;
+  // 先显示、下一帧再加 class：同一帧改这两个属性，transition 会被合并掉不播放
+  requestAnimationFrame(() => mask.classList.add('show'));
+}
+
 async function selectImage(name) {
   if (S.dirty && !confirm('当前图片有未保存的修改，确定切换？')) return;
   S.current = name;
+  // 窄屏：选完图就把左抽屉收起来，否则画布一直被盖着看不到东西。
+  // 桌面端这两个类本来就不存在，调用是无副作用的。
+  closeDrawers();
   S.edits = [];
   S.selectedId = null;
   S.draftPts = [];
@@ -1025,9 +1063,17 @@ function bindEvents() {
   };
 
   // 画布交互
-  canvas.onmousedown = onDown;
-  canvas.onmousemove = onMove;
-  canvas.onmouseup = onUp;
+  // 【为什么用 Pointer Events 而不是 mouse + touch 两套监听】
+  // 一套代码同时覆盖鼠标、手指、触控笔，不用维护两份分支逻辑；
+  // 也不会出现「浏览器对一次触摸同时派发 mouse 和 touch」导致的重复处理。
+  // 代价是触摸没有 e.detail（双击计数）、没有 button===2（右键），
+  // 所以下面用手势自己补：双击自己数，撤回上一点用提示条上的按钮。
+  canvas.addEventListener('pointerdown', onDown);
+  // move / up 挂在 window 上：拖出画布再松手也能收到。
+  // 挂 canvas 上的话手指滑出边界就丢 up，画笔会一直停在「涂抹中」。
+  window.addEventListener('pointermove', onMove);
+  window.addEventListener('pointerup', onUp);
+  window.addEventListener('pointercancel', onUp);
   canvas.oncontextmenu = e => e.preventDefault();
 
   // 显示开关
@@ -1058,6 +1104,11 @@ function bindEvents() {
 
   $('modalClose').onclick = () => $('modal').classList.add('hidden');
   window.onresize = () => { fitCanvas(); draw(); };
+
+  // 窄屏抽屉（桌面端这两个按钮被 CSS 隐藏，点不到）
+  $('btnLeftDrawer').onclick = () => toggleDrawer('left');
+  $('btnRightDrawer').onclick = () => toggleDrawer('right');
+  $('drawerMask').onclick = closeDrawers;
   window.onbeforeunload = e => { if (S.dirty) { e.preventDefault(); e.returnValue = ''; } };
 
   // 上传：按钮 → 文件选择框 → 选完立刻上传
@@ -1075,6 +1126,11 @@ function canvasPos(e) {
 
 function onDown(e) {
   if (!S.anno) return;
+  // 多指同时按住时只认第一根手指：否则两指会各拖一个框/各画一条线，
+  // 坐标互相打架。第一根抬起后 pointerId 归 null，下一根才能接管。
+  if (S.pointerId !== null && S.pointerId !== e.pointerId) return;
+  S.pointerId = e.pointerId;
+
   const [cx, cy] = canvasPos(e);
   const [nx, ny] = toNorm(cx, cy);
 
@@ -1126,7 +1182,11 @@ function onDown(e) {
 
 function onMove(e) {
   const [cx, cy] = canvasPos(e);
-  S.mouse.x = cx; S.mouse.y = cy; S.mouse.in = true;
+  // move 挂在 window 上（为了拖出画布也能收到），所以指针可能在画布外。
+  // 画笔/拖框这两种"已按下"的状态要照常处理——用户就是想在画布外继续拖；
+  // 只有悬停高亮需要知道指针是不是真的在画布上。
+  const inside = cx >= 0 && cy >= 0 && cx <= canvas.clientWidth && cy <= canvas.clientHeight;
+  S.mouse.x = cx; S.mouse.y = cy; S.mouse.in = inside;
 
   if (S.painting) {
     const [nx, ny] = toNorm(cx, cy);
@@ -1141,8 +1201,12 @@ function onMove(e) {
     return;
   }
 
-  // 悬停高亮：让用户知道鼠标底下是哪个对象
+  // 悬停高亮：让用户知道指针底下是哪个对象（触摸时不会触发，无害）
   if (S.tool === 'select' && S.anno) {
+    if (!inside) {
+      if (S.hoverId !== null) { S.hoverId = null; canvas.style.cursor = 'default'; draw(); }
+      return;
+    }
     const [nx, ny] = toNorm(cx, cy);
     const hit = hitTest(nx, ny);
     const hid = hit ? hit.id : null;
@@ -1154,7 +1218,26 @@ function onMove(e) {
   }
 }
 
+// 触摸事件没有 e.detail（双击计数），双击得自己数：
+// 两次抬起间隔 < 320ms 且几乎落在同一位置。
+// 【为什么位置阈值只有 12px】描边时用户会快速点下几个顶点，
+// 阈值放宽（比如 30px）会把「快速点两个相邻顶点」误判成双击，多边形提前闭合。
+const lastTap = { t: 0, x: 0, y: 0 };
+function isDoubleTap(e) {
+  const now = (typeof performance !== 'undefined' && performance.now)
+    ? performance.now() : Date.now();
+  const near = Math.abs(e.clientX - lastTap.x) < 12 && Math.abs(e.clientY - lastTap.y) < 12;
+  const hit = near && (now - lastTap.t) < 320;
+  lastTap.t = hit ? 0 : now;   // 命中后清零：连点三下只闭合一次
+  lastTap.x = e.clientX;
+  lastTap.y = e.clientY;
+  return hit;
+}
+
 function onUp(e) {
+  if (S.pointerId !== null && S.pointerId !== e.pointerId) return;
+  S.pointerId = null;
+
   if (S.painting) {
     S.painting = false;
     commitBrush();
@@ -1165,8 +1248,10 @@ function onUp(e) {
     applyBoxShape();
     return;
   }
-  // 多边形：双击闭合
-  if (S.drawing && e.detail === 2) finishPolygon();
+  // 多边形：双击闭合。鼠标有 detail 可用；触摸只能靠上面的手势判断。
+  if (S.drawing && e.target === canvas) {
+    if (e.detail === 2 || (e.pointerType === 'touch' && isDoubleTap(e))) finishPolygon();
+  }
 }
 
 /**
@@ -1754,6 +1839,8 @@ window.__APP__ = {
   deleteImage, restoreImages, clearStage, renderImageList, renderTrashBar,
   // 框选修形：测试要验证三种模式对轮廓的影响
   applyBoxShape, syncBoxHint,
+  // 窄屏抽屉：测试要验证「开一边自动收另一边」和遮罩点击关闭
+  toggleDrawer, closeDrawers,
 };
 
 // 自动化测试脚本（仅在带 ?uitest=1 时按需加载）

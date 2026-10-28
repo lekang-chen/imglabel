@@ -67,8 +67,8 @@ def shoot_scripted(browser, out_path, script, wait=9000, size="1600,950"):
     勾选框筛选后的效果。这些状态没法用 URL 参数直接进入。
     """
     # 把脚本挂到页面上，用 ?uitest=1 触发加载
-    with open(os.path.join(BASE_DIR, "canvas", "demo_script.js"), "w",
-              encoding="utf-8") as f:
+    tmp_script = os.path.join(BASE_DIR, "canvas", "demo_script.js")
+    with open(tmp_script, "w", encoding="utf-8") as f:
         f.write(script)
     cmd = [
         browser, "--headless=new", "--disable-gpu", "--hide-scrollbars",
@@ -78,10 +78,22 @@ def shoot_scripted(browser, out_path, script, wait=9000, size="1600,950"):
         "--screenshot=" + out_path,
         BASE_URL + "?uitest=1",
     ]
-    r = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
-    ok = os.path.exists(out_path) and os.path.getsize(out_path) > 5000
-    print("  %s  %s" % ("OK " if ok else "FAIL", os.path.basename(out_path)))
-    return ok
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+        ok = os.path.exists(out_path) and os.path.getsize(out_path) > 5000
+        print("  %s  %s" % ("OK " if ok else "FAIL", os.path.basename(out_path)))
+        return ok
+    finally:
+        # 【必须在 finally 里删，不能靠调用方收尾】
+        # 任何带 ?uitest=1 的页面都会自动加载这个文件。一旦残留，
+        # 下次跑 UI 测试时它会在后台抢着 selectImage、切换工具，
+        # 症状是「测试里的当前图片莫名变成别的图、S.img 为空后崩在 toCanvas」——
+        # 排查起来极难，因为报错位置和真实原因（一个没删的文件）完全无关。
+        if os.path.exists(tmp_script):
+            try:
+                os.remove(tmp_script)
+            except OSError:
+                pass
 
 
 # ---------------------------------------------------------------------------

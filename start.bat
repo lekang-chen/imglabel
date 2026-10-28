@@ -93,7 +93,7 @@ echo.
 echo   Address : http://127.0.0.1:5000
 echo   Upload photos with the button at top-left of the page.
 echo.
-"%PYEXE%" app.py
+"%PYEXE%" app.py %*
 
 if errorlevel 1 (
     echo.

@@ -210,7 +210,17 @@ body {
   display: flex; align-items: center; justify-content: center;
   overflow: hidden; min-height: 0;
 }
-#canvas { display: block; cursor: crosshair; }
+/* touch-action: none 是移动端能用画布的前提：
+   浏览器默认把单指拖动解释成"滚动页面"，手指一涂就整页跟着滚，
+   而且 pointermove 会在滚动开始后被浏览器夺走（pointercancel）。
+   关掉默认手势后，触摸事件才完整交给我们。
+   user-select / touch-callout 用来防长按选中文字和弹出系统菜单。 */
+#canvas {
+  display: block; cursor: crosshair;
+  touch-action: none;
+  -webkit-user-select: none; user-select: none;
+  -webkit-touch-callout: none;
+}
 #canvas.tool-select { cursor: default; }
 /* 画笔 / 橡皮用自定义光标，让用户一眼知道现在是"涂抹"模式 */
 #canvas.tool-brush  { cursor: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='24' height='24'><path d='M3 21l1.6-4.6L15.2 5.8l3 3L7.6 19.4 3 21z' fill='%23111'/><path d='M15.2 5.8l1.4-1.4a1.6 1.6 0 012.3 0l1.5 1.5a1.6 1.6 0 010 2.3l-1.4 1.4-3-3z' fill='%23444'/></svg>") 2 22, crosshair; }
@@ -484,3 +494,106 @@ table.cmp tr:last-child td { border-bottom: none; }
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: #dcdce0; border-radius: 4px; }
 ::-webkit-scrollbar-thumb:hover { background: #c4c4ca; }
+
+/* ========================================================================== */
+/*  窄屏适配（手机 / 平板竖屏）                                              */
+/*                                                                           */
+/*  桌面端三栏固定宽度（232 + 画布 + 244），手机竖屏只有 390px，             */
+/*  三栏并排的结果是画布被压成一条缝，完全没法标。                           */
+/*  方案：左右两栏改成覆盖式抽屉，画布独占整屏，用顶栏两个按钮呼出。         */
+/* ========================================================================== */
+
+/* 桌面端不显示移动端入口 */
+.mobile-nav { display: none; }
+.drawer-mask { display: none; }
+
+@media (max-width: 900px) {
+  /* ---------- 顶栏：优先保证画布宽度 ---------- */
+  .topbar { height: 48px; flex: 0 0 48px; padding: 0 10px; gap: 10px; }
+  .brand { min-width: 0; flex: 0 1 auto; }
+  .brand .title { font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .modes { gap: 2px; flex: 0 0 auto; }
+  /* 三个模式按钮在 390px 屏上是顶栏最大的一块开销，
+     字号和横向内边距都要收，否则右侧抽屉按钮会被挤出屏幕 */
+  .mode-btn { padding: 5px 7px; }
+  .mode-name { font-size: 12px; }
+  .mode-desc { display: none; }        /* 副标题在窄屏纯占位 */
+  .status { display: none; }           /* 统计挪进左抽屉，顶栏放不下 */
+  /* 【为什么不放在顶栏里】
+     390px 的屏上，logo + 三个模式按钮已经吃掉大半宽度，
+     抽屉按钮放进去会被挤到视口外（DOM 里在、样式可见、就是画不出来）。
+     改成固定在右下、工具栏上方的浮动按钮：不参与顶栏排布，
+     任何宽度都稳定可见，手指也更容易点中（46px 见方）。 */
+  .mobile-nav {
+    /* z-index 55：高于遮罩(50)、低于抽屉(60)。
+       抽屉打开时按钮仍在遮罩之上，点它就能收起；压在遮罩下则会变成
+       「看得见但点不动」，用户会以为按钮坏了。 */
+    position: fixed; right: 10px; bottom: 66px; z-index: 55;
+    display: flex; flex-direction: column; gap: 8px;
+    margin: 0;
+    /* 【为什么必须写死宽度】.mini-btn 自带 flex:1，在竖向容器里
+       flex-basis:0 会把高度算成 0，父容器跟着塌成 0×0——
+       元素在 DOM 里、computedStyle 也正常，但屏幕上什么都看不到。 */
+    width: 46px;
+  }
+  .mobile-nav .mini-btn {
+    flex: none;                   /* 盖掉 .mini-btn 的 flex:1 */
+    width: 46px; height: 46px; padding: 0; border-radius: 23px;
+    background: var(--panel); border: 1px solid var(--line);
+    box-shadow: 0 3px 10px rgba(0, 0, 0, .16);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 12px;
+  }
+
+  /* ---------- 左右两栏 -> 抽屉 ---------- */
+  .panel-left, .panel-right {
+    position: fixed; top: 0; bottom: 0; z-index: 60;
+    width: 84vw; max-width: 330px;
+    box-shadow: 0 6px 28px rgba(0, 0, 0, .18);
+    transition: transform .2s ease;
+  }
+  .panel-left  { left: 0;  transform: translateX(-102%); border-right: 1px solid var(--line); }
+  .panel-right { right: 0; transform: translateX(102%);  border-left: 1px solid var(--line); }
+  .panel-left.open, .panel-right.open { transform: translateX(0); }
+
+  .drawer-mask {
+    display: block; position: fixed; inset: 0; z-index: 50;
+    background: rgba(0, 0, 0, .35);
+    opacity: 0; transition: opacity .2s ease;
+  }
+  .drawer-mask.show { opacity: 1; }
+
+  /* 刘海屏：抽屉顶部留出安全区，标题不被状态栏压住 */
+  .panel-head { min-height: 42px; height: auto; padding-top: env(safe-area-inset-top); }
+
+  /* ---------- 触摸目标放大 ---------- */
+  /* 手指落点比鼠标粗得多，桌面 24px 高的按钮在手机上很容易点错 */
+  /* 工具栏内容总宽约 1000px，手机只有 390px，靠横向滚动。
+     按钮字号和内边距收小一点，能把滚动距离从 2.6 屏降到 2 屏左右 */
+  .tool-btn { height: 34px; min-width: 38px; padding: 0 9px; font-size: 12px; }
+  .toolbar { height: 52px; flex: 0 0 52px; gap: 9px; padding: 0 8px; }
+  .tool-label { font-size: 10px; }
+  /* 右边缘渐隐：提示"后面还有按钮，可以横滑"。
+     不给提示的话，第一个被切一半的按钮看起来像布局坏了。 */
+  .toolbar {
+    -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 16px), transparent);
+    mask-image: linear-gradient(to right, #000 calc(100% - 16px), transparent);
+  }
+  #canvas { cursor: crosshair; }        /* 触摸设备不需要笔形光标 */
+  .mini-btn { height: 30px; padding: 0 10px; }
+  .btn { height: 34px; }
+
+  /* 底部手势条：画布不让出这块，涂到最下面会触发系统返回 */
+  .canvas-wrap { padding-bottom: env(safe-area-inset-bottom); }
+}
+
+/* 极小屏（如 iPhone SE 竖屏）：标题让位，只留 logo */
+@media (max-width: 560px) {
+  .brand .title { display: none; }
+}
+
+/* 触摸设备没有 hover：照片的删除按钮必须常显，
+   否则 @media(hover:none) 下「悬停显形」等于永远不显示，手机上根本删不掉照片 */
+@media (hover: none) {
+  .img-del { opacity: 1; }
+}
