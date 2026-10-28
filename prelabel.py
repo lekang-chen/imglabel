@@ -30,6 +30,8 @@ import queue
 import threading
 import time
 
+from core import IMAGE_EXTS
+
 # ---------------------------------------------------------------------------
 # 异步队列（任务书术语表明确提到的机制）
 # ---------------------------------------------------------------------------
@@ -423,7 +425,7 @@ def run_prelabel_job(job, image_dir=None, class_names=None,
     world_model.set_classes(list(class_names))
 
     images = sorted([f for f in os.listdir(image_dir)
-                     if f.lower().endswith((".jpg", ".jpeg", ".png"))])
+                     if f.lower().endswith(IMAGE_EXTS)])
     if only is not None:
         wanted = set(only)
         images = [f for f in images if f in wanted]
@@ -708,7 +710,7 @@ def run_relabel_job(job, image_dir, weights_path, conf=0.40, round_tag="R2",
     conf_low = min(thr_map.values()) if thr_map else conf
 
     images = sorted([f for f in os.listdir(image_dir)
-                     if f.lower().endswith((".jpg", ".jpeg", ".png"))])
+                     if f.lower().endswith(IMAGE_EXTS)])
     if only is not None:
         wanted = set(only)
         images = [f for f in images if f in wanted]

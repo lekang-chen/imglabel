@@ -83,7 +83,7 @@ def refuse_if_not_exported():
             sys.exit("[错误] 目录为空: %s\n        请重新导出数据集。" % d)
 
     n_images = len([f for f in os.listdir(required[0])
-                    if f.lower().endswith((".jpg", ".jpeg", ".png"))])
+                    if f.lower().endswith((".jpg", ".jpeg", ".png", ".bmp", ".webp"))])
     if n_images == 0:
         sys.exit("[错误] 训练集里没有图片，请重新导出。")
 

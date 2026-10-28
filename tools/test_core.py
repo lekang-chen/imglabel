@@ -26,9 +26,9 @@ import tempfile
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from core import (CLASSES, Annotation, Object, instance_from_objects,
-                  point_in_polygon, polygon_area, polygon_bbox,
-                  semantic_from_objects, simplify_polygon)
+from core import (CLASSES, IMAGE_EXTS, Annotation, Object,
+                  instance_from_objects, point_in_polygon, polygon_area,
+                  polygon_bbox, semantic_from_objects, simplify_polygon)
 from exporter import export_dataset, export_yolo_label, validate_dataset
 
 PASS = 0
@@ -396,6 +396,60 @@ def test_export_clamps_out_of_range():
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+def test_upload_exts_match_list():
+    """上传白名单必须和「列出图片」的白名单一致（线上事故回归）。
+
+    真实现象：手机上传 webp -> 后端存成 IMG_8072.webp 并提示上传成功，
+    但列表接口不认 .webp，图片在界面上根本不出现；紧接着的自动预标注
+    把这个文件名拿去和列表求交集，交集是空集，于是弹
+    「data/images/ 目录里没有图片」——界面上同时写着「已加载 153 张」。
+    自相矛盾的提示就是这么来的，根因是两份白名单各写各的。
+    """
+    print("\n[9] 上传 / 列表 扩展名一致性（webp 事故回归）")
+    import app as web
+
+    check("上传白名单就是列表白名单", tuple(web.UPLOAD_EXTS) == tuple(IMAGE_EXTS),
+          "%s vs %s" % (web.UPLOAD_EXTS, IMAGE_EXTS))
+    check("白名单含 .webp（手机相册会转成 webp）", ".webp" in IMAGE_EXTS, str(IMAGE_EXTS))
+    check("白名单含 .bmp", ".bmp" in IMAGE_EXTS, str(IMAGE_EXTS))
+
+    tmp = tempfile.mkdtemp(prefix="imgexts_")
+    old = web.IMAGE_DIR
+    try:
+        web.IMAGE_DIR = tmp
+        for fn in ("a.jpg", "b.webp", "c.bmp", "d.txt", "e.HEIC"):
+            open(os.path.join(tmp, fn), "wb").close()
+
+        got = web.list_images()
+        check("list_images 列出 jpg/webp/bmp",
+              got == ["a.jpg", "b.webp", "c.bmp"], str(got))
+        check("list_images 不列非图片（txt/HEIC）",
+              not any(g.lower().endswith((".txt", ".heic")) for g in got), str(got))
+
+        # 返回码与文案：指定了图但一张都不在目录里时，不能笼统说「目录里没有图片」。
+        # only 非空且不匹配 -> 一定提前 400，不会真的起任务。
+        client = web.app.test_client()
+        r = client.post("/api/prelabel/start", json={"images": ["不存在.jpg"]})
+        msg = (r.get_json() or {}).get("error", "")
+        check("指定的图找不到时 400 且文案点明「指定的图片」",
+              r.status_code == 400 and "指定" in msg, "%d %s" % (r.status_code, msg))
+
+        # 目录真空的时候，仍然是原来那句
+        empty = tempfile.mkdtemp(prefix="imgexts_empty_")
+        try:
+            web.IMAGE_DIR = empty
+            r2 = client.post("/api/prelabel/start", json={"model": "official"})
+            msg2 = (r2.get_json() or {}).get("error", "")
+            check("目录真空时报「目录里没有图片」",
+                  r2.status_code == 400 and "目录里没有图片" in msg2,
+                  "%d %s" % (r2.status_code, msg2))
+        finally:
+            shutil.rmtree(empty, ignore_errors=True)
+    finally:
+        web.IMAGE_DIR = old
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 if __name__ == "__main__":
     print("=" * 60)
     print("核心逻辑自测")
@@ -409,6 +463,7 @@ if __name__ == "__main__":
     test_png_roundtrip()
     test_simplify_closed_ring()
     test_export_clamps_out_of_range()
+    test_upload_exts_match_list()
     print("\n" + "=" * 60)
     print("结果: %d 通过, %d 失败" % (PASS, FAIL))
     print("=" * 60)

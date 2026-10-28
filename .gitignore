@@ -88,3 +88,21 @@ data/_diag/
 canvas/demo_script.js
 canvas/stroke_script.js
 canvas/polyhint_script.js
+
+# 本机试机时传进来的私人照片：不入库。
+# 入库的 150 张是 COCO 公开图，文档里的指标（检测 0.728 / 掩码 0.580）
+# 全部基于那 150 张；把这些图提交进来会让"别人 clone 下来复现"的口径变掉。
+# 本地留着是为了演示上传/预标注链路，不影响仓库内容。
+data/images/1.jpg
+data/images/2.jpg
+data/images/3.jpg
+data/images/IMG_8072.webp
+data/images/IMG_8073.webp
+data/annotations/1.json
+data/annotations/2.json
+data/annotations/3.json
+data/annotations/IMG_8072.json
+data/annotations/IMG_8073.json
+
+# 手动备份目录（排查事故用，确认无碍后删）
+data/_bak_ann_*/

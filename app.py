@@ -35,7 +35,7 @@ import webbrowser
 from flask import (Flask, jsonify, request, send_file,
                    send_from_directory, abort)
 
-from core import (CLASSES, Annotation, Object, class_color,
+from core import (CLASSES, IMAGE_EXTS, Annotation, Object, class_color,
                   point_in_polygon)
 from exporter import export_dataset, validate_dataset, format_report
 from prelabel import JobManager, run_prelabel_job, run_relabel_job
@@ -128,15 +128,16 @@ def save_anno(ann):
 def list_images():
     if not os.path.isdir(IMAGE_DIR):
         return []
-    exts = (".jpg", ".jpeg", ".png", ".bmp")
+    # 扩展名白名单只在 core.IMAGE_EXTS 定义一次，别在这里另写一份：
+    # 两边一旦分叉，就会出现「上传成功但列表里没有」的鬼故事（见 core.py）。
     return sorted([f for f in os.listdir(IMAGE_DIR)
-                   if f.lower().endswith(exts)])
+                   if f.lower().endswith(IMAGE_EXTS)])
 
 
 # ---------------------------------------------------------------------------
 # 上传：把用户自己的照片放进 data/images/
 # ---------------------------------------------------------------------------
-UPLOAD_EXTS = (".jpg", ".jpeg", ".png", ".bmp", ".webp")
+UPLOAD_EXTS = IMAGE_EXTS   # 上传与列表共用同一份白名单，见 core.py 注释
 MAX_UPLOAD_BYTES = 20 * 1024 * 1024   # 单张 20MB，手机照片足够
 MAX_UPLOAD_SIDE = 1920                # 长边超过就等比缩小
 
@@ -580,6 +581,14 @@ def api_prelabel_start():
         wanted = set(only)
         images = [n for n in images if n in wanted]
     if not images:
+        # 两种空集要分开说：整目录空，和「你指定的这几张找不到」。
+        # 混成一句「目录里没有图片」会让人对着 153 张图片发呆（真事）。
+        if only:
+            head = "、".join(sorted(wanted)[:3])
+            more = "" if len(wanted) <= 3 else " 等 %d 张" % len(wanted)
+            return jsonify({
+                "error": "指定的图片不在 data/images/ 里：%s%s" % (head, more)
+            }), 400
         return jsonify({"error": "data/images/ 目录里没有图片"}), 400
 
     state = load_state()
