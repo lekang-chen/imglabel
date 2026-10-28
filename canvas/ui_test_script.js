@@ -15,6 +15,8 @@
      T12 上传入口：按钮/多选/默认勾选、非图片被拒、拖拽遮罩显隐
      T13 删除照片：每项都有删除按钮、取消不发请求、请求只带一个名字、
          删除按钮不误触选中、恢复提示条显隐
+     T14 框选修形：并入/挖掉/替换三种模式对轮廓的作用、无选中与
+         框过小时的边界行为、退出后回到选择工具
 
    【这个文件必须放在 canvas/ 下】
    Flask 的static_folder 指向 canvas/，app.js 在 ?uitest=1 时
@@ -475,6 +477,111 @@
     } finally {
       w.confirm = realConfirm;
       w.fetch = realFetchDel;
+    }
+
+    // ---------- T14 框选修形：并入 / 挖掉 / 替换 ----------
+    // 起因：模型只把沙发圈了右半边。人的诉求是「这一块也属于它」，
+    // 所以工具要能把一个框并进已有轮廓，而不是逼人重画一百个点。
+    {
+      S.tool = 'select';
+      cv.className = 'tool-select';
+      const base = {
+        id: 'test_box', class: 'couch', edited: true, source: 'human',
+        polygon: [[0.45,0.40],[0.60,0.40],[0.60,0.60],[0.45,0.60]],
+      };
+      S.anno.objects = [base];
+      S.selectedId = base.id;
+      S.unchecked = new Set();
+      S.focusMode = false;
+      S.undoStack.length = 0;
+      S.origById[base.id] = JSON.stringify(base);
+      S.edits = [];
+      S.brushMask = null;
+
+      const boxBtn = d.querySelector('.tool-btn[data-tool="box"]');
+      boxBtn.click();
+      ok('框选工具已激活', S.tool === 'box');
+      ok('框选光标是十字', cv.className === 'tool-box', 'class=' + cv.className);
+      const hint = d.getElementById('boxHint');
+      ok('框选提示条已显示', !!hint && !hint.hidden);
+      ok('默认模式是「并入」', S.boxMode === 'add', 'mode=' + S.boxMode);
+
+      // 用真实鼠标拖一个框：x 0.25~0.50，与对象左半重叠 -> 应连成一块
+      const cwr = cv.getBoundingClientRect();
+      const toClient = (nx, ny) => {
+        const p = A.toCanvas(nx, ny);
+        return { x: cwr.left + p[0], y: cwr.top + p[1] };
+      };
+      async function dragBox(x0, y0, x1, y1) {
+        let p = toClient(x0, y0);
+        fire(w, d, cv, 'mousedown', { clientX: p.x, clientY: p.y, button: 0 });
+        p = toClient(x1, y1);
+        fire(w, d, cv, 'mousemove', { clientX: p.x, clientY: p.y });
+        fire(w, d, cv, 'mouseup', { clientX: p.x, clientY: p.y, button: 0 });
+        await new Promise(r => setTimeout(r, 250));
+      }
+
+      const areaBase = polyArea(base.polygon);
+      await dragBox(0.25, 0.40, 0.50, 0.60);
+      const areaAdd = polyArea(base.polygon);
+      const minX = Math.min(...base.polygon.map(q => q[0]));
+      ok('并入后轮廓变大', areaAdd > areaBase * 1.5,
+         areaBase.toFixed(4) + ' -> ' + areaAdd.toFixed(4));
+      ok('并入后轮廓延伸到框的左边缘（真的补全了）', minX < 0.28,
+         'minX=' + minX.toFixed(3));
+      ok('并入后仍是一个连续多边形', base.polygon.length >= 3,
+         base.polygon.length + ' 点');
+      ok('并入算一次可撤销的修改', S.undoStack.length >= 1,
+         'undo=' + S.undoStack.length);
+
+      // 挖掉：框落在对象身体里，面积应下降
+      S.boxMode = 'cut';
+      A.syncBoxHint();
+      ok('切到挖掉模式', S.boxMode === 'cut');
+      const areaPreCut = polyArea(base.polygon);
+      S.brushMask = null;
+      await dragBox(0.52, 0.45, 0.60, 0.55);
+      const areaCut = polyArea(base.polygon);
+      ok('挖掉后轮廓变小', areaCut < areaPreCut,
+         areaPreCut.toFixed(4) + ' -> ' + areaCut.toFixed(4));
+
+      // 替换：轮廓直接变成这个框
+      S.boxMode = 'replace';
+      A.syncBoxHint();
+      S.brushMask = null;
+      await dragBox(0.20, 0.20, 0.40, 0.32);
+      const xs = base.polygon.map(q => q[0]), ys = base.polygon.map(q => q[1]);
+      const bw = Math.max(...xs) - Math.min(...xs);
+      const bh = Math.max(...ys) - Math.min(...ys);
+      ok('替换后轮廓范围等于框',
+         Math.abs(bw - 0.20) < 0.03 && Math.abs(bh - 0.12) < 0.03,
+         bw.toFixed(3) + ' x ' + bh.toFixed(3));
+      ok('替换后轮廓确实挪到了新位置',
+         Math.abs(Math.min(...xs) - 0.20) < 0.03,
+         'minX=' + Math.min(...xs).toFixed(3));
+
+      // 没选中对象时拉框：不许崩，也不许改坏数据
+      S.boxMode = 'add';
+      const keep = JSON.stringify(base.polygon);
+      S.selectedId = null;
+      S.brushMask = null;
+      await dragBox(0.60, 0.60, 0.80, 0.80);
+      ok('没选中对象时拉框不改任何轮廓',
+         JSON.stringify(base.polygon) === keep);
+
+      // 手抖点一下（框极小）：不算操作
+      S.selectedId = base.id;
+      S.brushMask = null;
+      await dragBox(0.30, 0.30, 0.301, 0.301);
+      ok('框太小时忽略，不产生空轮廓',
+         base.polygon.length >= 3 && JSON.stringify(base.polygon) === keep);
+
+      // 收尾：回到选择工具，清掉测试对象
+      d.getElementById('btnCancelBox').click();
+      ok('退出框选后回到选择工具', S.tool === 'select', 'tool=' + S.tool);
+      S.anno.objects = [];
+      S.selectedId = null;
+      S.undoStack.length = 0;
     }
 
     // ---------- 汇总 ----------

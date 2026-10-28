@@ -22,7 +22,9 @@ const S = {
   current: null,          // 当前图片名
   anno: null,             // 当前标注 {image,width,height,objects:[]}
   mode: 'seg',            // seg | det | sem
-  tool: 'select',         // select | polygon | brush | erase
+  tool: 'select',         // select | polygon | brush | erase | box
+  boxDrag: null,          // 框选修形的橡皮筋 {x0,y0,x1,y1}（归一化），null = 没在拉
+  boxMode: 'add',         // add 并入 | cut 挖掉 | replace 换成这个框
   selectedId: null,       // 选中的对象 id
   scale: 1,               // 缩放比例
   offsetX: 0, offsetY: 0, // 画布偏移
@@ -482,6 +484,9 @@ function draw() {
     ctx.closePath(); ctx.fill(); ctx.stroke();
     ctx.restore();
   }
+
+  // 框选修形的橡皮筋
+  drawBoxDrag();
 }
 
 function drawObject(o) {
@@ -805,6 +810,7 @@ function syncPolyHint() {
   const tip = $('drawingTip');
   const on = S.tool === 'polygon';
   if (bar) bar.hidden = !on;
+  syncBoxHint();
   if (!tip) return;
   if (!on || !S.drawing) {
     tip.classList.add('hidden');
@@ -815,6 +821,16 @@ function syncPolyHint() {
   tip.textContent = n < 3
     ? `已点 ${n} 个点 · 继续沿物体轮廓点击（至少 3 点），然后双击或按 Enter 闭合`
     : `已点 ${n} 个点 · 双击或按「完成描边」闭合；点歪了用「撤回一点」或画布右键`;
+}
+
+/** 框选修形的提示条：只有切到这个工具才显示，并把当前模式高亮出来。 */
+function syncBoxHint() {
+  const bar = $('boxHint');
+  if (!bar) return;
+  bar.hidden = S.tool !== 'box';
+  document.querySelectorAll('.box-mode').forEach(b => {
+    b.classList.toggle('active', b.dataset.boxmode === S.boxMode);
+  });
 }
 
 function renderProps() {
@@ -912,7 +928,12 @@ function bindEvents() {
       S.tool = b.dataset.tool;
       canvas.className = 'tool-' + S.tool;
       if (S.tool !== 'polygon') { S.drawing = false; S.draftPts = []; }
+      if (S.tool !== 'box') S.boxDrag = null;
       syncPolyHint();
+      if (S.tool === 'box' && !S.selectedId) {
+        // 不拦着不让进（有人习惯先切工具再点对象），但要明确说清楚顺序
+        toast('框选修形：先用「选择」点一个对象，再拉框');
+      }
       if (S.tool === 'brush' || S.tool === 'erase') {
         if (!S.selectedId) {
           toast('先用「选择」工具点一个对象，再来涂抹');
@@ -967,6 +988,28 @@ function bindEvents() {
     S.drawing = false; S.draftPts = [];
     syncPolyHint(); draw();
   };
+
+  // 框选修形：模式切换 + 退出
+  document.querySelectorAll('.box-mode').forEach(b => {
+    b.onclick = () => {
+      S.boxMode = b.dataset.boxmode;
+      syncBoxHint();
+      draw();
+    };
+  });
+  const cancelBox = $('btnCancelBox');
+  if (cancelBox) {
+    cancelBox.onclick = () => {
+      S.boxDrag = null;
+      S.tool = 'select';
+      canvas.className = 'tool-select';
+      document.querySelectorAll('.tool-btn[data-tool]').forEach(x => x.classList.remove('active'));
+      const sb = document.querySelector('.tool-btn[data-tool="select"]');
+      if (sb) sb.classList.add('active');
+      syncBoxHint();
+      draw();
+    };
+  }
 
   // 撤销 / 重做
   $('btnUndo').onclick = undo;
@@ -1046,6 +1089,13 @@ function onDown(e) {
     return;
   }
 
+  if (S.tool === 'box') {
+    if (e.button === 2) { S.boxDrag = null; draw(); return; }
+    S.boxDrag = { x0: nx, y0: ny, x1: nx, y1: ny };
+    draw();
+    return;
+  }
+
   if (S.tool === 'select') {
     const hit = hitTest(nx, ny);
     S.selectedId = hit ? hit.id : null;
@@ -1084,6 +1134,13 @@ function onMove(e) {
     return;
   }
 
+  if (S.boxDrag) {
+    const [nx, ny] = toNorm(cx, cy);
+    S.boxDrag.x1 = nx; S.boxDrag.y1 = ny;
+    draw();
+    return;
+  }
+
   // 悬停高亮：让用户知道鼠标底下是哪个对象
   if (S.tool === 'select' && S.anno) {
     const [nx, ny] = toNorm(cx, cy);
@@ -1104,8 +1161,92 @@ function onUp(e) {
     draw();
     return;
   }
+  if (S.boxDrag) {
+    applyBoxShape();
+    return;
+  }
   // 多边形：双击闭合
   if (S.drawing && e.detail === 2) finishPolygon();
+}
+
+/**
+ * 框选修形：把「拉出来的框」并进 / 挖掉 / 替换当前对象的轮廓。
+ *
+ * 【为什么不是让模型重新抠一次】
+ * 这条路的起因是「沙发只圈了一半」。查下来的结论是：模型给的掩码本身就是
+ * 右半边——官方 yolo26n-seg 与自训 best.pt 都只认到 x≈0.47，掩码是完整单块
+ * （连通块 1 个，占 100%），不存在「转多边形丢了像素」。也试过 SAM 的框提示：
+ * 框拉大一点它把小狗雕塑/毯子当成目标，点提示又只给单个坐垫。
+ * 也就是说这是模型能力边界，再套一层模型只会引入新的不确定性。
+ *
+ * 所以这里做成**确定性**的操作：人给一个框（「这一块也属于它」），
+ * 系统把框内的像素并进对象的位图掩码，再把掩码提回多边形。
+ * 复用的是画笔已经验证过的栅格→多边形管线（commitBrush），
+ * 撤销、修正记录、自动保存全都白拿，不用另写一套状态管理。
+ */
+function applyBoxShape() {
+  const r = S.boxDrag;
+  S.boxDrag = null;
+  if (!r || !S.anno) { draw(); return; }
+
+  const o = S.anno.objects.find(x => x.id === S.selectedId);
+  if (!o) {
+    toast('先选中一个对象（「选择」工具点它一下），再拉框', true);
+    draw();
+    return;
+  }
+
+  const x1 = Math.min(r.x0, r.x1), x2 = Math.max(r.x0, r.x1);
+  const y1 = Math.min(r.y0, r.y1), y2 = Math.max(r.y0, r.y1);
+  if (x2 - x1 < 0.004 || y2 - y1 < 0.004) {   // 手抖点了一下，不算操作
+    toast('框太小了，按住拖一个框出来', true);
+    draw();
+    return;
+  }
+
+  if (!S.brushMask || S.brushMask.id !== o.id) buildBrushMask(o);
+  const m = S.brushMask;
+  const ctx = m.ctx;
+  ctx.save();
+  if (S.boxMode === 'replace') {
+    // 整个轮廓换成这个框：先清空位图，再填满框
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.clearRect(0, 0, m.w, m.h);
+    ctx.fillStyle = '#fff';
+  } else if (S.boxMode === 'cut') {
+    ctx.globalCompositeOperation = 'destination-out';
+    ctx.fillStyle = '#000';
+  } else {
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.fillStyle = '#fff';
+  }
+  ctx.fillRect(x1 * m.w, y1 * m.h, (x2 - x1) * m.w, (y2 - y1) * m.h);
+  ctx.restore();
+
+  // commitBrush 认的是 paintTarget，不是 selectedId
+  S.paintTarget = o.id;
+  commitBrush();
+}
+
+/** 框选过程中画橡皮筋 */
+function drawBoxDrag() {
+  const r = S.boxDrag;
+  if (!r) return;
+  const [x1, y1] = toCanvas(Math.min(r.x0, r.x1), Math.min(r.y0, r.y1));
+  const [x2, y2] = toCanvas(Math.max(r.x0, r.x1), Math.max(r.y0, r.y1));
+  ctx.save();
+  ctx.setLineDash([6, 4]);
+  ctx.lineWidth = 1.5;
+  ctx.strokeStyle = S.boxMode === 'cut' ? '#f87171'
+                  : S.boxMode === 'replace' ? '#fbbf24' : '#34d399';
+  ctx.fillStyle = S.boxMode === 'cut' ? 'rgba(248,113,113,.12)'
+                : S.boxMode === 'replace' ? 'rgba(251,191,36,.12)'
+                : 'rgba(52,211,153,.12)';
+  ctx.beginPath();
+  ctx.rect(x1, y1, x2 - x1, y2 - y1);
+  ctx.fill();
+  ctx.stroke();
+  ctx.restore();
 }
 
 /**
@@ -1602,7 +1743,7 @@ window.__APP__ = {
   get S() { return S; },
   get saveTimer() { return saveTimer; },
   draw, buildBrushMask, visibleObjects, isVisible, toCanvas, toNorm,
-  renderObjects, selectImage, hitTest, commitBrush,
+  renderObjects, renderProps, selectImage, hitTest, commitBrush,
   // 撤销栈：自动化测试要直接触发并检查栈深，所以一并导出。
   undo, redo, pushUndo, addObject, deleteSelected, changeClass,
   saveSoon, saveNow,
@@ -1611,6 +1752,8 @@ window.__APP__ = {
   uploadFiles, pickFiles,
   // 删除：测试要验证删除后画布是否清空、列表是否同步
   deleteImage, restoreImages, clearStage, renderImageList, renderTrashBar,
+  // 框选修形：测试要验证三种模式对轮廓的影响
+  applyBoxShape, syncBoxHint,
 };
 
 // 自动化测试脚本（仅在带 ?uitest=1 时按需加载）

@@ -117,6 +117,19 @@
         <button class="tool-btn" data-tool="polygon" title="多边形描轮廓：逐个点击物体轮廓上的点，围完一圈后双击（或按 Enter）闭合；右键撤回上一个点">多边形</button>
         <button class="tool-btn" data-tool="brush" title="画笔：先选中一个对象，再按住鼠标涂抹增/删它的轮廓">画笔</button>
         <button class="tool-btn" data-tool="erase" title="橡皮：先选中一个对象，再涂抹削掉它的轮廓">橡皮</button>
+        <button class="tool-btn" data-tool="box" title="框选修形：选中一个对象，在画布上拉一个框，把框内的区域并进轮廓（修「只圈了一半」）／挖掉（修「多圈了」）／替换成这个框">框选修形</button>
+      </div>
+      <div class="tool-group" id="boxHint" hidden>
+        <span class="tool-hint">
+          先选中对象，再拉一个框：
+        </span>
+        <button class="btn btn-ghost btn-xs box-mode active" data-boxmode="add"
+                title="把框里的区域并进当前轮廓——模型只圈了一半时用它">并入</button>
+        <button class="btn btn-ghost btn-xs box-mode" data-boxmode="cut"
+                title="把框里的区域从当前轮廓里挖掉——模型多圈了桌子/杂物时用它">挖掉</button>
+        <button class="btn btn-ghost btn-xs box-mode" data-boxmode="replace"
+                title="轮廓直接换成这个框，再拖顶点贴合">替换</button>
+        <button class="btn btn-ghost btn-xs" id="btnCancelBox">退出</button>
       </div>
       <div class="tool-group" id="polyHint" hidden>
         <span class="tool-hint">

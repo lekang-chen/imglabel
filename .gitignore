@@ -79,3 +79,6 @@ dataset/_eval.yaml
 # 删除照片的回收站：软删除把「图片 + 标注」搬到这里，属于运行期数据。
 # 用户自己删哪张图不该进版本库，恢复靠界面上的「恢复」按钮。
 data/_trash/
+
+# 单图诊断脚本生成的对比图（tools/diag_one_image.py 等，运行期产物）
+data/_diag/
