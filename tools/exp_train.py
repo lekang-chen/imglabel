@@ -174,6 +174,57 @@ CONFIGS = {
         copy_paste=0.35, scale=0.5, degrees=5.0, cls=1.2,
         desc="iter4 收尾版：早关 mosaic，最后 40 轮贴近真实分布",
     ),
+
+    # ==================== 第八轮（通宵）：多种子重复 ====================
+    # iter3_long 配方换 4 个新种子，与已有的 seed42/7 合计 6 个种子，
+    # 用来算「均值 ± 标准差」，把 iter4 的选取建立在可靠的统计上。
+    "ms1": dict(
+        base="model/best.pt", seed=1,
+        freeze=10, lr0=0.0008, lrf=0.01, optimizer="SGD",
+        epochs=120, patience=40, cos_lr=True, close_mosaic=20,
+        copy_paste=0.5, scale=0.7, degrees=8.0, cls=1.2,
+        desc="iter3_long 配方 seed=1",
+    ),
+    "ms2": dict(
+        base="model/best.pt", seed=2,
+        freeze=10, lr0=0.0008, lrf=0.01, optimizer="SGD",
+        epochs=120, patience=40, cos_lr=True, close_mosaic=20,
+        copy_paste=0.5, scale=0.7, degrees=8.0, cls=1.2,
+        desc="iter3_long 配方 seed=2",
+    ),
+    "ms3": dict(
+        base="model/best.pt", seed=123,
+        freeze=10, lr0=0.0008, lrf=0.01, optimizer="SGD",
+        epochs=120, patience=40, cos_lr=True, close_mosaic=20,
+        copy_paste=0.5, scale=0.7, degrees=8.0, cls=1.2,
+        desc="iter3_long 配方 seed=123",
+    ),
+    "ms4": dict(
+        base="model/best.pt", seed=2024,
+        freeze=10, lr0=0.0008, lrf=0.01, optimizer="SGD",
+        epochs=120, patience=40, cos_lr=True, close_mosaic=20,
+        copy_paste=0.5, scale=0.7, degrees=8.0, cls=1.2,
+        desc="iter3_long 配方 seed=2024",
+    ),
+
+    # ==================== 第九轮（通宵）：更大模型 s ====================
+    # yolo26s-seg 参数量约为 n 的 3 倍。风险：120 张图喂不饱（过拟合）；
+    # 收益：COCO 上学到的特征更丰富，小目标（cup/bottle）可能受益。
+    # batch 从 8 降到 6 防 8GB 显存 OOM。
+    "s_long": dict(
+        base="weights/yolo26s-seg.pt",
+        freeze=10, lr0=0.0008, lrf=0.01, optimizer="SGD",
+        epochs=120, patience=40, cos_lr=True, close_mosaic=20,
+        copy_paste=0.5, scale=0.7, degrees=8.0, cls=1.2, batch=6,
+        desc="s 模型 + iter3_long 配方（官方权重起步）",
+    ),
+    "s_cont": dict(
+        base="model/best.pt",
+        freeze=10, lr0=0.0004, lrf=0.01, optimizer="SGD",
+        epochs=80, patience=30, cos_lr=True, close_mosaic=18,
+        copy_paste=0.4, scale=0.6, degrees=6.0, cls=1.2, batch=6,
+        desc="从当前 n 权重「升维」继续训 s 结构（继承十类知识）",
+    ),
 }
 
 
@@ -202,6 +253,8 @@ def run_one(tag):
     base = cfg.pop("base", None)
     # 随机种子允许覆盖，用来做「同配置换种子」的复现实验
     seed = cfg.pop("seed", 42)
+    # batch 允许覆盖：s 模型显存翻倍，8GB 卡上 640 尺寸 batch=8 会 OOM
+    batch = cfg.pop("batch", 8)
     if base and not os.path.isabs(base):
         base = os.path.join(BASE_DIR, base)
     if base and not os.path.exists(base):
@@ -219,7 +272,7 @@ def run_one(tag):
     model.train(
         data=TMP_YAML,
         imgsz=imgsz,
-        batch=8,
+        batch=batch,
         device=0,
         workers=4,
         project=RUNS_DIR,
@@ -239,7 +292,7 @@ def run_one(tag):
     # 但重新评一次能确保用的是同一份最新标签）
     best = os.path.join(RUNS_DIR, "exp_%s" % tag, "weights", "best.pt")
     m = YOLO(best)
-    r = m.val(data=TMP_YAML, imgsz=imgsz, batch=8, verbose=False)
+    r = m.val(data=TMP_YAML, imgsz=imgsz, batch=batch, verbose=False)
     out = {
         "tag": tag,
         "desc": desc,
