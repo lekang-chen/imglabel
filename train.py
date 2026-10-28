@@ -40,6 +40,8 @@ DATASET_DIR = os.path.join(BASE_DIR, "dataset")          # ← 唯一允许的�
 DATA_YAML = os.path.join(DATASET_DIR, "data.yaml")
 MODEL_DIR = os.path.join(BASE_DIR, "model")
 RUNS_DIR = os.path.join(BASE_DIR, "runs")
+BACKUP_DIR = os.path.join(MODEL_DIR, "_backup")   # 被覆盖前的旧权重
+BACKUP_KEEP = 3                                    # 只留最近 3 份（每份 6~7 MB）
 
 # 十类词表（与 core.py 保持一致）
 CLASSES = [
@@ -306,6 +308,40 @@ def pick_base_weights():
     return "yolo26n-seg.pt"
 
 
+def backup_existing_best(dst):
+    """
+    覆盖 model/best.pt 之前，先把旧的那份存进 model/_backup/。
+
+    【为什么必须做】best.pt 是「要提交的那份」，覆盖是不可逆的。
+    只要新训练比原来差（换种子、数据集没更新、早停早、只跑了几轮），
+    验收用的权重就被换掉了，而本地没有第二份。
+    实测同配置只换随机种子，掩码 mAP 能差 ±0.035——
+    在这种波动下「再训一次」经常不是变好而是变差，所以旧的那份必须留得住。
+
+    返回备份路径；原来没有 best.pt 时返回 None。只保留最近 BACKUP_KEEP 份。
+    """
+    if not os.path.exists(dst):
+        return None
+    os.makedirs(BACKUP_DIR, exist_ok=True)
+    stamp = time.strftime("%Y%m%d_%H%M%S")
+    out = os.path.join(BACKUP_DIR, "best_%s.pt" % stamp)
+    n = 1
+    while os.path.exists(out):            # 同一秒内连训两次也不能互相覆盖
+        out = os.path.join(BACKUP_DIR, "best_%s_%d.pt" % (stamp, n))
+        n += 1
+    shutil.copy2(dst, out)
+
+    olds = [os.path.join(BACKUP_DIR, f) for f in os.listdir(BACKUP_DIR)
+            if f.startswith("best_") and f.endswith(".pt")]
+    olds.sort(key=os.path.getmtime)          # 按时间留，不按文件名（同秒会加后缀，字母序会骗人）
+    for p in olds[:-BACKUP_KEEP]:
+        try:
+            os.remove(p)
+        except OSError:
+            pass
+    return out
+
+
 def main():
     parser = argparse.ArgumentParser(description="人机协同图像标注系统 - 模型微调")
     parser.add_argument("--epochs", type=int, default=None, help="训练轮数")
@@ -397,6 +433,9 @@ def main():
         src = max(cands, key=os.path.getmtime)
 
     dst = os.path.join(MODEL_DIR, "best.pt")
+    old = backup_existing_best(dst)
+    if old:
+        print("        旧权重已备份: %s" % old)
     shutil.copy2(src, dst)
 
     elapsed = time.time() - t0

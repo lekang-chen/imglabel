@@ -114,3 +114,6 @@ dataset/_stale/
 
 # 未审核的草稿标注（新上传的图还没人工过一遍，不该进训练集）
 data/_unreviewed/
+
+# 训练前自动备份的旧权重（每份 6~7 MB，只留最近 3 份，不进库）
+model/_backup/

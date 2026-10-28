@@ -1767,7 +1767,17 @@ async function doExport() {
 
 // ---------------------------------------------------------------- 训练
 async function doTrain() {
-  if (!confirm('开始训练？这会覆盖 model/best.pt。')) return;
+  // 训练会覆盖 model/best.pt（就是验收用的那份），旧版只写一句「会覆盖」，
+  // 用户看不出：① 它读的是上次导出的数据集，不是界面上现在的标注；
+  //             ② 跑完不会自动回标。两条都写进弹窗，别让人点完才发现。
+  if (!confirm(
+    '开始训练？\n\n'
+    + '· 读的是 dataset/ 里上次导出的数据集，不是界面上现在的标注。\n'
+    + '  刚改过标注的话，先点「导出数据集」再训练。\n'
+    + '· 从官方 yolo26n-seg.pt 微调，本机约 4~5 分钟（后台跑，可继续标注）。\n'
+    + '· 跑完会覆盖 model/best.pt，旧权重自动备份到 model/_backup/（留最近 3 份）。\n'
+    + '· 训练完不会自动回标，要用新权重得再点「回标」。'
+  )) return;
   try {
     await api('/api/train', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
