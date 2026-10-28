@@ -187,6 +187,8 @@ async function init() {
     if (it) await selectImage(it.name);
   }
   draw();
+  // 页面打开时如果训练还在跑（比如中途刷新了），把进度条接上
+  initTrainWatch();
 }
 
 async function loadImages() {
@@ -1114,6 +1116,13 @@ function bindEvents() {
   $('btnCompare').onclick = showCompare;
   $('btnRecords').onclick = showRecords;
 
+  // 训练进度浮层
+  $('trainClose').onclick = () => {
+    $('trainHud').classList.add('hidden');
+    TRAIN.hiddenByUser = true;      // 只是收起，轮询不停：跑完还要弹一次
+  };
+  $('trainLogBtn').onclick = showTrainLog;
+
   $('modalClose').onclick = () => $('modal').classList.add('hidden');
   window.onresize = () => { fitCanvas(); draw(); };
 
@@ -1766,6 +1775,127 @@ async function doExport() {
 }
 
 // ---------------------------------------------------------------- 训练
+// ---------------------------------------------------------------- 训练进度
+// 训练是后台子进程（4~5 分钟），前端没有推送通道，只能轮询。
+// 三个状态必须分清楚：
+//   running → 第几轮 / 百分比 / 还要多久
+//   done    → 停在结果上，不自动消失（用户要拿这个 mAP 去答辩）
+//   failed  → 说清为什么（脚本报错 vs 进程被杀），别让人一直等一个已经结束的任务
+const TRAIN = { timer: null, hiddenByUser: false, last: null };
+
+function fmtPct(p) {
+  const v = Number(p) || 0;
+  return (v >= 10 ? v.toFixed(0) : v.toFixed(1)) + '%';
+}
+
+// 文字用整数好读，条本身用一位小数才平滑（否则一轮内会一格一格跳）
+function widthPct(p) {
+  const v = Math.max(0, Math.min(100, Number(p) || 0));
+  return v.toFixed(1) + '%';
+}
+
+function trainMetrics(s) {
+  const m = [];
+  if (s.box_map50 != null) m.push(`检测 mAP50 ${s.box_map50.toFixed(3)}`);
+  if (s.mask_map50 != null) m.push(`掩码 ${s.mask_map50.toFixed(3)}`);
+  return m.join(' · ');
+}
+
+function renderTrain(s) {
+  const hud = $('trainHud');
+  if (!hud) return;
+  TRAIN.last = s;
+  const terminal = s.state === 'done' || s.state === 'failed';
+  // 用户手动收起后，训练中不再强行弹回来；但结束（成/败）要弹一次——
+  // 「跑完了」是用户唯一在等的那条消息。
+  if (TRAIN.hiddenByUser && !terminal) return;
+  if (terminal) TRAIN.hiddenByUser = false;
+
+  hud.classList.remove('hidden', 'done', 'failed');
+  const title = $('trainTitle'), fill = $('trainFill');
+  const line = $('trainLine'), sub = $('trainSub'), note = $('trainNote');
+
+  if (s.state === 'done') {
+    hud.classList.add('done');
+    title.textContent = '训练完成';
+    fill.style.width = '100%';
+    line.textContent = s.minutes != null ? `用时 ${s.minutes} 分钟` : '已完成';
+    sub.textContent = trainMetrics(s) || '日志里没有验证指标';
+    note.textContent = s.early_stopped ? '已早停（效果不再提升）' : 'best.pt 已更新';
+  } else if (s.state === 'failed') {
+    hud.classList.add('failed');
+    title.textContent = '训练未完成';
+    fill.style.width = widthPct(s.percent);
+    line.textContent = s.error || '未知原因';
+    sub.textContent = s.epoch ? `停在第 ${s.epoch}/${s.total_epochs} 轮` : '';
+    note.textContent = '旧权重未被覆盖，可点「看日志」';
+  } else {
+    // running / starting
+    const pct = Number(s.percent) || 0;
+    title.textContent = s.state === 'starting'
+      ? '正在启动训练…'
+      : `训练中 · 第 ${s.epoch}/${s.total_epochs} 轮`;
+    fill.style.width = widthPct(pct);
+    const bits = [fmtPct(pct)];
+    if (s.elapsed_text) bits.push(`已用 ${s.elapsed_text}`);
+    if (s.eta_text && s.eta_sec > 3) bits.push(`预计剩余 ${s.eta_text}`);
+    line.textContent = bits.join('　');
+    sub.textContent = trainMetrics(s) || '第一轮验证还没出，稍等';
+    note.textContent = '后台运行，可继续标注';
+  }
+
+  // 训练期间禁用按钮：两个训练进程会抢同一块显卡，而且互相覆盖日志
+  const btn = $('btnTrain');
+  if (btn) {
+    const busy = s.state === 'running' || s.state === 'starting';
+    btn.disabled = busy;
+    btn.textContent = busy ? '训练中…' : '训练';
+  }
+}
+
+function stopTrainWatch() {
+  if (TRAIN.timer) { clearInterval(TRAIN.timer); TRAIN.timer = null; }
+  const btn = $('btnTrain');
+  if (btn) { btn.disabled = false; btn.textContent = '训练'; }
+}
+
+async function pollTrain() {
+  let s;
+  try { s = await api('/api/train/status'); } catch (e) { return; }
+  // 万一日志被清空、meta 丢了，别把已经跑起来的界面抹回「准备中」——
+  // 只有真的拿到 idle 且我们没在等，才收工
+  if (s.state === 'idle' && TRAIN.last
+      && (TRAIN.last.state === 'running' || TRAIN.last.state === 'starting')) {
+    return;
+  }
+  renderTrain(s);
+  if (s.state === 'done') {
+    stopTrainWatch();
+    toast('训练完成，可以点「回标」用新权重了');
+  } else if (s.state === 'failed') {
+    stopTrainWatch();
+    toast('训练未完成：' + (s.error || '见日志'), true);
+  }
+}
+
+function watchTrain() {
+  if (TRAIN.timer) return;
+  pollTrain();
+  TRAIN.timer = setInterval(pollTrain, 1500);
+}
+
+// 刷新页面后如果训练还在跑，进度条要自己接上——不然关一下标签页，
+// 就只能等它默默结束，什么都不知道。
+async function initTrainWatch() {
+  try {
+    const s = await api('/api/train/status');
+    if (s.state === 'running' || s.state === 'starting') {
+      renderTrain(s);
+      watchTrain();
+    }
+  } catch (e) {}
+}
+
 async function doTrain() {
   // 训练会覆盖 model/best.pt（就是验收用的那份），旧版只写一句「会覆盖」，
   // 用户看不出：① 它读的是上次导出的数据集，不是界面上现在的标注；
@@ -1783,8 +1913,11 @@ async function doTrain() {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({}),
     });
-    toast('训练已在后台启动，可在终端查看日志');
-    setTimeout(showTrainLog, 4000);
+    // 先立刻给个「启动中」，别让用户点完到第一次轮询之间什么都看不到
+    TRAIN.hiddenByUser = false;
+    renderTrain({ state: 'starting', percent: 0, total_epochs: 0 });
+    watchTrain();
+    toast('训练已启动，右上角可看进度');
   } catch (e) { toast('启动失败: ' + e.message, true); }
 }
 
@@ -1881,6 +2014,9 @@ init();
 window.__APP__ = {
   get S() { return S; },
   get saveTimer() { return saveTimer; },
+  // 训练进度：测试要验证三种状态的文案与按钮禁用，所以把渲染入口导出去
+  get TRAIN() { return TRAIN; },
+  renderTrain, stopTrainWatch,
   draw, buildBrushMask, visibleObjects, isVisible, toCanvas, toNorm,
   renderObjects, renderProps, selectImage, hitTest, commitBrush,
   // 撤销栈：自动化测试要直接触发并检查栈深，所以一并导出。

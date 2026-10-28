@@ -496,6 +496,104 @@ def test_prelabel_overwrite_guard():
           str(r3.get_json()))
 
 
+def test_train_progress():
+    """训练日志解析（进度条的唯一数据来源）。
+
+    训练在后台子进程里跑，前端画进度条只有一条路：把 ultralytics 的
+    终端输出解析出来。它打印的格式不是契约（换版本就变），所以这段
+    解析必须能被单独测——不然哪天它换排版，用户看到的就是一条永远 0% 的条。
+
+    另外这条测试锁住一个真实踩过的坑：日志里带 ANSI 清行码（\\x1b[K），
+    不剥掉的话行首不是空格，`^\\s*14/100` 全部匹配失败，进度永远「启动中」。
+    """
+    print("\n[11] 训练进度解析")
+    from train_progress import human_duration, parse_train_log
+
+    check("空日志 = 未开始", parse_train_log("")["state"] == "idle")
+
+    s = parse_train_log("Starting training for 100 epochs...\n")
+    check("刚开始 = starting，且知道总轮数",
+          s["state"] == "starting" and s["total_epochs"] == 100, str(s))
+
+    mid = ("Starting training for 100 epochs...\n"
+           "     14/100      2.22G      1.305      3.525   640: 25% ━━ 4/16 5.0it/s\n")
+    s = parse_train_log(mid)
+    check("跑到一半 = running，百分比含轮内进度",
+          s["state"] == "running" and s["epoch"] == 14
+          and abs(s["percent"] - 13.2) < 0.2,
+          "epoch=%s percent=%s" % (s["epoch"], s["percent"]))
+
+    done = ("Starting training for 100 epochs...\n"
+            "     51/100      2.22G      1.3      3.6\n"
+            "                        all         31        166      0.498"
+            "      0.488      0.486      0.347      0.346      0.385"
+            "      0.334      0.151\n"
+            "EarlyStopping: Training stopped early as no improvement"
+            " observed in last 50 epochs.\n"
+            "[4/4] 训练完成，耗时 3.3 分钟\n")
+    s = parse_train_log(done)
+    check("完成 = done / 100% / 带耗时",
+          s["state"] == "done" and s["percent"] == 100.0 and s["minutes"] == 3.3,
+          str(s))
+    check("取到 box 与 mask 两个 mAP50（8 个数字里第 3 和第 7 个）",
+          abs(s["box_map50"] - 0.486) < 1e-6
+          and abs(s["mask_map50"] - 0.334) < 1e-6,
+          "%s / %s" % (s["box_map50"], s["mask_map50"]))
+    check("识别早停", s["early_stopped"] is True, str(s["early_stopped"]))
+
+    s = parse_train_log("Starting training for 100 epochs...\n"
+                        "[错误] 训练失败: CUDA out of memory\n")
+    check("失败 = failed，且原因能带出来",
+          s["state"] == "failed" and "out of memory" in s["error"], s["error"])
+
+    ansi = "\x1b[K     14/100      2.22G      1.3\r\x1b[K     15/100      2.22G      1.3\r"
+    s = parse_train_log(ansi)
+    check("剥掉 ANSI 控制码后仍能认出轮次",
+          s["epoch"] == 15 and s["state"] == "running",
+          "epoch=%s state=%s" % (s["epoch"], s["state"]))
+
+    check("秒数转人话", human_duration(192) == "3 分 12 秒"
+          and human_duration(8) == "8 秒" and human_duration(None) == "",
+          human_duration(192))
+
+
+def test_train_backup_keep_baseline():
+    """训练覆盖前的权重备份，以及「只留 3 份」时不能把 baseline 删掉。
+
+    真实现象：一天里连点两次训练，第二次的产物比第一次差（早停在第 1 轮，
+    检测 0.695 / 掩码 0.417，而原来那份是 0.760 / 0.540）。要是没有备份，
+    验收用的权重就没了。备份本身又有个反向风险：留 3 份、按时间删，
+    连训几次就把最早那份——往往正是 baseline——悄悄删掉。
+    """
+    print("\n[12] 权重备份保留策略")
+    import train
+
+    tmp = tempfile.mkdtemp(prefix="wback_")
+    old_dir = train.BACKUP_DIR
+    try:
+        train.BACKUP_DIR = os.path.join(tmp, "_backup")
+        os.makedirs(train.BACKUP_DIR)
+        base = "best_20260101_000000_baseline.pt"
+        with open(os.path.join(train.BACKUP_DIR, base), "wb") as f:
+            f.write(b"BASE")
+
+        dst = os.path.join(tmp, "best.pt")
+        for i in range(6):
+            with open(dst, "wb") as f:
+                f.write(b"V%d" % i)
+            p = train.backup_existing_best(dst)
+            check("备份内容与原件一致", open(p, "rb").read() == b"V%d" % i)
+
+        files = os.listdir(train.BACKUP_DIR)
+        check("baseline 不会被「只留 N 份」清掉", base in files, str(sorted(files)))
+        others = [f for f in files if "baseline" not in f]
+        check("其余备份按上限保留", len(others) == train.BACKUP_KEEP,
+              "%d 份: %s" % (len(others), sorted(others)))
+    finally:
+        train.BACKUP_DIR = old_dir
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 if __name__ == "__main__":
     print("=" * 60)
     print("核心逻辑自测")
@@ -511,6 +609,8 @@ if __name__ == "__main__":
     test_export_clamps_out_of_range()
     test_upload_exts_match_list()
     test_prelabel_overwrite_guard()
+    test_train_progress()
+    test_train_backup_keep_baseline()
     print("\n" + "=" * 60)
     print("结果: %d 通过, %d 失败" % (PASS, FAIL))
     print("=" * 60)

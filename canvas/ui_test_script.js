@@ -751,6 +751,74 @@
       A.syncPrelabelBtn();
     }
 
+    // ---------- T16 训练进度浮层 ----------
+    // 训练是后台跑 4~5 分钟。旧版点完只说「可在终端查看日志」——用户既不知道
+    // 还要多久，也不知道跑完没有；手机上更是连终端都看不到。这里钉住四件事：
+    // 进度条要动、按钮要禁用、收起后不反复弹、失败必须说清原因。
+    {
+      const hud = d.getElementById('trainHud');
+      const btn = d.getElementById('btnTrain');
+      const fill = d.getElementById('trainFill');
+      const title = d.getElementById('trainTitle');
+      const line = d.getElementById('trainLine');
+      const sub = d.getElementById('trainSub');
+      const note = d.getElementById('trainNote');
+      A.TRAIN.hiddenByUser = false;
+
+      A.renderTrain({
+        state: 'running', epoch: 12, total_epochs: 100, percent: 11.5,
+        elapsed_text: '32 秒', eta_text: '4 分 08 秒', eta_sec: 248,
+        box_map50: 0.51, mask_map50: 0.33,
+      });
+      ok('训练中：浮层可见且报出第几轮',
+         !hud.classList.contains('hidden') && title.textContent.indexOf('12/100') > 0,
+         title.textContent);
+      ok('训练中：进度条宽度＝百分比',
+         Math.abs(parseFloat(fill.style.width) - 11.5) < 0.01, fill.style.width);
+      ok('训练中：显示预计剩余时间', line.textContent.indexOf('剩余') > 0,
+         line.textContent);
+      ok('训练中：训练按钮禁用（两个进程会抢同一块显卡）',
+         btn.disabled === true && btn.textContent === '训练中…', btn.textContent);
+
+      // 用户点「×」收起后，训练中不该反复弹回来；但跑完必须弹一次——
+      // 「跑完了」是他唯一在等的消息。
+      hud.classList.add('hidden');
+      A.TRAIN.hiddenByUser = true;
+      A.renderTrain({ state: 'running', epoch: 13, total_epochs: 100, percent: 12 });
+      ok('收起后训练中不再弹出', hud.classList.contains('hidden'));
+
+      A.renderTrain({
+        state: 'done', percent: 100, minutes: 3.3,
+        box_map50: 0.696, mask_map50: 0.417, early_stopped: true,
+      });
+      ok('跑完自动弹回并变绿',
+         !hud.classList.contains('hidden') && hud.classList.contains('done'));
+      ok('完成：显示耗时与两个指标',
+         line.textContent.indexOf('3.3') > 0 && sub.textContent.indexOf('0.696') > 0,
+         sub.textContent);
+      ok('完成：按钮恢复可点', btn.disabled === false && btn.textContent === '训练',
+         btn.textContent);
+      ok('完成：早停要说出来（不然用户以为白等了）',
+         note.textContent.indexOf('早停') > 0, note.textContent);
+
+      A.renderTrain({
+        state: 'failed', percent: 43, epoch: 51, total_epochs: 100,
+        error: '训练进程已退出，日志里没有完成标记（可能被中断）',
+      });
+      ok('失败：变红且说明原因',
+         hud.classList.contains('failed') && line.textContent.indexOf('中断') > 0,
+         line.textContent);
+      ok('失败：告诉用户旧权重没被覆盖',
+         note.textContent.indexOf('未被覆盖') > 0, note.textContent);
+
+      A.stopTrainWatch();
+      hud.classList.add('hidden');
+      hud.classList.remove('done', 'failed');
+      A.TRAIN.hiddenByUser = false;
+      btn.disabled = false;
+      btn.textContent = '训练';
+    }
+
     // ---------- 汇总 ----------
     log.unshift('结果：' + pass + ' 通过 / ' + fail + ' 失败\n');
     return log.join('\n');

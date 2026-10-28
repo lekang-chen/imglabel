@@ -39,6 +39,7 @@ from core import (CLASSES, IMAGE_EXTS, Annotation, Object, class_color,
                   point_in_polygon)
 from exporter import export_dataset, validate_dataset, format_report
 from prelabel import JobManager, run_prelabel_job, run_relabel_job
+from train_progress import human_duration, parse_train_log
 
 # ---------------------------------------------------------------------------
 # 路径配置（全部相对于项目根目录，保证换电脑也能跑）
@@ -51,6 +52,10 @@ DATASET_DIR = os.path.join(BASE_DIR, "dataset")
 MODEL_DIR = os.path.join(BASE_DIR, "model")
 RECORD_DIR = os.path.join(BASE_DIR, "records")
 WEIGHT_DIR = os.path.join(BASE_DIR, "weights")
+
+# 训练进度：日志给内容，meta 给 pid 与启动时刻（判断进程还活着没有）
+TRAIN_LOG = os.path.join(DATA_DIR, "train.log")
+TRAIN_META = os.path.join(DATA_DIR, "train_meta.json")
 
 # 删除照片时不是 os.remove，而是把「图片 + 标注」成对搬到这里。
 # 【为什么】data/images 里的图连着标注，标注里有 60 条人工修正，
@@ -760,11 +765,99 @@ def api_train():
         log_action(state, "开始训练", " ".join(cmd))
         save_state(state)
         with open(log_file, "w", encoding="utf-8") as f:
-            subprocess.Popen(cmd, stdout=f, stderr=subprocess.STDOUT,
-                             cwd=BASE_DIR)
+            proc = subprocess.Popen(cmd, stdout=f, stderr=subprocess.STDOUT,
+                                    cwd=BASE_DIR)
+        # 记下 pid 和启动时刻。前端靠它区分「还在跑」和「进程没了但没写完成标记」，
+        # 后者是最容易让人一直干等的情况（窗口被关、任务被系统杀）。
+        with open(TRAIN_META, "w", encoding="utf-8") as f:
+            json.dump({"pid": proc.pid, "started_at": time.time(),
+                       "cmd": cmd}, f, ensure_ascii=False)
 
     threading.Thread(target=worker, daemon=True).start()
     return jsonify({"ok": True, "log": log_file})
+
+
+def _pid_alive(pid):
+    """进程还在不在。
+
+    Windows 上不能用 os.kill(pid, 0) —— 那边没有「发 0 号信号探活」的语义，
+    实际会走到 TerminateProcess，等于直接把训练杀了。改用
+    OpenProcess + WaitForSingleObject：句柄等不到信号（WAIT_TIMEOUT）才说明还活着。
+    """
+    try:
+        pid = int(pid)
+    except (TypeError, ValueError):
+        return False
+    if pid <= 0:
+        return False
+    try:
+        if os.name == "nt":
+            import ctypes
+
+            SYNCHRONIZE = 0x00100000
+            h = ctypes.windll.kernel32.OpenProcess(SYNCHRONIZE, False, pid)
+            if not h:
+                return False
+            try:
+                return ctypes.windll.kernel32.WaitForSingleObject(h, 0) == 0x102
+            finally:
+                ctypes.windll.kernel32.CloseHandle(h)
+        os.kill(pid, 0)
+        return True
+    except OSError:
+        return False
+
+
+@app.route("/api/train/status")
+def api_train_status():
+    """训练进度快照，给前端画进度条。
+
+    日志是唯一的事实来源（ultralytics 只往 stdout 写），这里把它翻译成
+    「第几轮 / 百分之几 / 还要多久」。另外单独判断进程是否还活着：
+    日志停在第 43 轮、进程却已经死了（关窗口、被杀）时，必须报失败，
+    不能让它永远挂在 43% —— 那比没有进度条更糟。
+    """
+    text = ""
+    if os.path.exists(TRAIN_LOG):
+        with open(TRAIN_LOG, encoding="utf-8", errors="replace") as f:
+            text = f.read()[-200000:]   # 只读尾部，100 轮的日志几百 KB 没必要全读
+    snap = parse_train_log(text)
+
+    meta = {}
+    if os.path.exists(TRAIN_META):
+        try:
+            with open(TRAIN_META, encoding="utf-8") as f:
+                meta = json.load(f) or {}
+        except (OSError, ValueError):
+            meta = {}
+
+    alive = _pid_alive(meta.get("pid"))
+    # 只信 meta 里的启动时刻。不要拿日志文件的 ctime 兜底：训练开始时是
+    # open(w) 截断重写，文件创建时间还停在很久以前，算出来会是「已用 17 分钟」这种假数。
+    # 拿不到就不显示已用时间，宁可少一条信息也不编一条。
+    started = meta.get("started_at")
+    elapsed = (time.time() - started) if started else None
+    if snap["state"] in ("idle", "starting") and alive:
+        snap["state"] = "starting"   # 进程在，但还没打出第一轮的表格
+    if snap["state"] in ("running", "starting") and not alive:
+        snap["state"] = "failed"
+        snap["error"] = snap["error"] or "训练进程已退出，日志里没有完成标记（可能被中断）"
+
+    # 完成时以日志自己记的耗时为准（它不含模型加载那几十秒）
+    if snap["state"] == "done" and snap.get("minutes"):
+        elapsed = snap["minutes"] * 60
+
+    # 预计剩余：按当前平均速度外推。进度太靠前时不给（误差会大到没意义）。
+    eta = None
+    if snap["state"] == "running" and elapsed and snap["percent"] > 2:
+        eta = elapsed / snap["percent"] * (100 - snap["percent"])
+
+    snap["alive"] = alive
+    snap["elapsed_sec"] = round(elapsed, 1) if elapsed else None
+    snap["elapsed_text"] = human_duration(elapsed)
+    snap["eta_sec"] = round(eta, 1) if eta else None
+    snap["eta_text"] = human_duration(eta)
+    return jsonify(snap)
 
 
 @app.route("/api/train/log")

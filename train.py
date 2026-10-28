@@ -331,8 +331,11 @@ def backup_existing_best(dst):
         n += 1
     shutil.copy2(dst, out)
 
+    # 名字里带 baseline 的是人工钉住的基准权重，不参与「只留最近 N 份」的清理。
+    # 否则连训几次之后，验收用的那份反而被自动删掉了——那正是备份要防的事。
     olds = [os.path.join(BACKUP_DIR, f) for f in os.listdir(BACKUP_DIR)
-            if f.startswith("best_") and f.endswith(".pt")]
+            if f.startswith("best_") and f.endswith(".pt")
+            and "baseline" not in f]
     olds.sort(key=os.path.getmtime)          # 按时间留，不按文件名（同秒会加后缀，字母序会骗人）
     for p in olds[:-BACKUP_KEEP]:
         try:

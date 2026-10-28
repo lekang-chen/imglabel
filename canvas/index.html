@@ -230,6 +230,24 @@
 <!-- 抽屉遮罩：点一下关闭左/右栏（窄屏专用） -->
 <div class="drawer-mask" id="drawerMask" hidden></div>
 
+<!-- 训练进度浮层。
+     训练在后台跑 4~5 分钟，旧版只说一句「可在终端查看日志」——
+     用户既不知道还有多久，也不知道跑完没有。这个卡片固定在画布上方，
+     轮询 /api/train/status，跑完变绿并停在结果上，不自动消失。 -->
+<div class="train-hud hidden" id="trainHud">
+  <div class="train-hud-head">
+    <span class="train-hud-title" id="trainTitle">正在训练…</span>
+    <button class="train-hud-close" id="trainClose" title="收起">×</button>
+  </div>
+  <div class="train-hud-bar"><div class="train-hud-fill" id="trainFill"></div></div>
+  <div class="train-hud-line" id="trainLine">准备中…</div>
+  <div class="train-hud-sub mono" id="trainSub"></div>
+  <div class="train-hud-foot">
+    <span class="train-hud-note" id="trainNote"></span>
+    <button class="train-hud-link" id="trainLogBtn">看日志</button>
+  </div>
+</div>
+
 <script src="/static/geom.js"></script>
 <script src="/static/app.js"></script>
 </body>

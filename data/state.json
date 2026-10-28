@@ -3717,6 +3717,61 @@
       "time": "2026-10-28 21:00:32",
       "action": "预标注完成",
       "detail": "official, 6 张图"
+    },
+    {
+      "time": "2026-10-28 21:07:20",
+      "action": "导出数据集",
+      "detail": "训练125/验证31, 校验通过"
+    },
+    {
+      "time": "2026-10-28 21:11:04",
+      "action": "开始训练",
+      "detail": "D:\\imglabel\\.venv\\Scripts\\python.exe D:\\imglabel\\train.py"
+    },
+    {
+      "time": "2026-10-28 21:16:23",
+      "action": "上传图片",
+      "detail": "1 张：9959fc521741be2692e8c9fec94fb753.jpg"
+    },
+    {
+      "time": "2026-10-28 21:16:35",
+      "action": "预标注完成",
+      "detail": "official, 1 张图"
+    },
+    {
+      "time": "2026-10-28 21:22:37",
+      "action": "保存标注",
+      "detail": "9959fc521741be2692e8c9fec94fb753.jpg (7 个对象, 1 个已修正)"
+    },
+    {
+      "time": "2026-10-28 21:22:41",
+      "action": "保存标注",
+      "detail": "9959fc521741be2692e8c9fec94fb753.jpg (6 个对象, 1 个已修正)"
+    },
+    {
+      "time": "2026-10-28 21:23:20",
+      "action": "保存标注",
+      "detail": "9959fc521741be2692e8c9fec94fb753.jpg (7 个对象, 2 个已修正)"
+    },
+    {
+      "time": "2026-10-28 21:23:25",
+      "action": "保存标注",
+      "detail": "9959fc521741be2692e8c9fec94fb753.jpg (7 个对象, 2 个已修正)"
+    },
+    {
+      "time": "2026-10-28 21:23:56",
+      "action": "导出数据集",
+      "detail": "训练126/验证31, 校验通过"
+    },
+    {
+      "time": "2026-10-28 21:24:16",
+      "action": "开始训练",
+      "detail": "D:\\imglabel\\.venv\\Scripts\\python.exe D:\\imglabel\\train.py"
+    },
+    {
+      "time": "2026-10-28 21:31:30",
+      "action": "开始训练",
+      "detail": "D:\\imglabel\\.venv\\Scripts\\python.exe D:\\imglabel\\train.py --epochs 2"
     }
   ],
   "train_history": [
@@ -3764,6 +3819,33 @@
       "device": "NVIDIA GeForce RTX 5060 Laptop GPU",
       "minutes": 2.9,
       "n_images": 120
+    },
+    {
+      "time": "2026-10-28 21:14:54",
+      "epochs": 100,
+      "batch": 8,
+      "imgsz": 640,
+      "device": "NVIDIA GeForce RTX 5060 Laptop GPU",
+      "minutes": 3.8,
+      "n_images": 125
+    },
+    {
+      "time": "2026-10-28 21:27:34",
+      "epochs": 100,
+      "batch": 8,
+      "imgsz": 640,
+      "device": "NVIDIA GeForce RTX 5060 Laptop GPU",
+      "minutes": 3.3,
+      "n_images": 126
+    },
+    {
+      "time": "2026-10-28 21:32:09",
+      "epochs": 2,
+      "batch": 8,
+      "imgsz": 640,
+      "device": "NVIDIA GeForce RTX 5060 Laptop GPU",
+      "minutes": 0.6,
+      "n_images": 126
     }
   ]
 }

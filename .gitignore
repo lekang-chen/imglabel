@@ -117,3 +117,6 @@ data/_unreviewed/
 
 # 训练前自动备份的旧权重（每份 6~7 MB，只留最近 3 份，不进库）
 model/_backup/
+
+# 训练进度用的运行时文件（pid 与启动时刻，本机有效，换机器无意义）
+data/train_meta.json

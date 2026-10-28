@@ -150,6 +150,65 @@ body {
 .progress-fill { height: 100%; width: 0; background: var(--accent); transition: width .25s; }
 .progress-text { font-size: 11px; color: var(--text-2); margin-top: 6px; }
 
+/* ---------------- 训练进度浮层 ----------------
+   训练是后台跑的 4~5 分钟，期间的唯一反馈。做成浮层而不是列表里的细条：
+   训练时用户可能在画布上做别的事，浮层固定在角上才不会被忽略。 */
+.train-hud {
+  position: fixed; top: 56px; right: 16px; width: 296px; z-index: 60;
+  background: var(--panel); border: 1px solid var(--line-2);
+  border-radius: var(--radius); box-shadow: 0 6px 24px rgba(0,0,0,.14);
+  padding: 11px 13px 10px;
+  animation: hudIn .18s ease-out;
+}
+@keyframes hudIn {
+  from { opacity: 0; transform: translateY(-5px); }
+  to   { opacity: 1; transform: none; }
+}
+.train-hud-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.train-hud-title { font-size: 12px; font-weight: 600; color: var(--text); }
+.train-hud-close {
+  border: 0; background: none; color: var(--text-3);
+  font-size: 16px; line-height: 1; cursor: pointer; padding: 0 2px;
+}
+.train-hud-close:hover { color: var(--text); }
+.train-hud-bar {
+  height: 6px; background: var(--line); border-radius: 3px;
+  overflow: hidden; margin: 9px 0 8px;
+}
+.train-hud-fill {
+  height: 100%; width: 0; background: var(--accent);
+  border-radius: 3px; transition: width .45s ease;
+}
+.train-hud-line {
+  font-size: 12px; color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+.train-hud-sub { font-size: 11px; color: var(--text-2); margin-top: 4px; }
+.train-hud-foot {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 8px; margin-top: 8px;
+}
+.train-hud-note { font-size: 10.5px; color: var(--text-3); }
+.train-hud-link {
+  border: 0; background: none; color: var(--accent);
+  font-size: 11px; cursor: pointer; padding: 0; flex: none;
+}
+.train-hud-link:hover { text-decoration: underline; }
+
+.train-hud.done { border-color: rgba(5, 150, 105, .45); }
+.train-hud.done .train-hud-fill { background: var(--ok); }
+.train-hud.done .train-hud-title { color: var(--ok); }
+.train-hud.failed { border-color: rgba(220, 38, 38, .45); }
+.train-hud.failed .train-hud-fill { background: var(--warn); }
+.train-hud.failed .train-hud-title { color: var(--warn); }
+
+/* 窄屏：顶部被 header 占着，改到底部浮动按钮上方 */
+@media (max-width: 900px) {
+  .train-hud {
+    top: auto; bottom: 124px; right: 10px; left: 10px; width: auto;
+  }
+}
+
 /* ---------------- 图片列表 ---------------- */
 .list-head {
   display: flex; justify-content: space-between;
