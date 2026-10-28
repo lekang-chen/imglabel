@@ -450,6 +450,52 @@ def test_upload_exts_match_list():
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+def test_prelabel_overwrite_guard():
+    """全量预标注必须挡住「有修正、但没确认覆盖」的请求。
+
+    真实现象：在电脑上点「预标注」，confirm 只写「对全部图片生成草稿」，
+    没人看得出人工修正会跟着没。确认之后 60 条修正全被模型原始输出覆盖，
+    只能靠 git 里的版本捞回来。
+
+    修法两层：前端弹窗明确报数字；服务端没收到 force=true 就直接 409。
+    这里测第二层——前端可以被绕过（脚本、旧缓存页面），服务端不能。
+    """
+    print("\n[10] 全量预标注覆盖保护")
+    import app as web
+    client = web.app.test_client()
+
+    edited = 0
+    for n in web.list_images():
+        a = web.load_anno(n)
+        if a is not None:
+            edited += a.edited_count()
+
+    if edited == 0:
+        # 没有修正时放行是正常行为，但那样会真的跑任务，测试里不碰
+        check("当前标注没有修正，跳过 409 用例", True)
+        return
+
+    r = client.post("/api/prelabel/start", json={"model": "official"})
+    j = r.get_json() or {}
+    check("有修正时全量预标注被拒（409）", r.status_code == 409,
+          "%d %s" % (r.status_code, j.get("error")))
+    check("拒绝信息里带修正条数",
+          isinstance(j.get("edited"), int) and j["edited"] > 0, str(j))
+    check("拒绝信息提示需要 force", j.get("need_force") is True, str(j))
+
+    # 回标（custom）同样要挡
+    r2 = client.post("/api/prelabel/start", json={"model": "custom"})
+    check("有修正时全量回标也被拒（409）", r2.status_code == 409,
+          str(r2.get_json()))
+
+    # 只标指定图片不受影响（only 非空不走这道闸门）
+    one = web.list_images()[0]
+    r3 = client.post("/api/prelabel/start",
+                     json={"model": "official", "images": ["__nope__.jpg"]})
+    check("指定图片路径仍走「找不到」分支（400）", r3.status_code == 400,
+          str(r3.get_json()))
+
+
 if __name__ == "__main__":
     print("=" * 60)
     print("核心逻辑自测")
@@ -464,6 +510,7 @@ if __name__ == "__main__":
     test_simplify_closed_ring()
     test_export_clamps_out_of_range()
     test_upload_exts_match_list()
+    test_prelabel_overwrite_guard()
     print("\n" + "=" * 60)
     print("结果: %d 通过, %d 失败" % (PASS, FAIL))
     print("=" * 60)

@@ -1619,17 +1619,33 @@ async function startPrelabel(opts) {
   const scope = only ? `${only.length} 张新图` : '全部图片';
 
   if (!only && !S.images.length) { toast('还没有图片，先上传照片', true); return; }
+
+  // 全量预标注会重写全部标注文件，人工修正跟着没。
+  // 原先这句 confirm 只写「生成草稿」，用户根本看不出修正会丢——
+  // 结果在电脑上点了一下「预标注」，60 条修正被覆盖（2026-10-28）。
+  const editedTotal = S.images.reduce((s, i) => s + (i.edited || 0), 0);
   if (!o.silent) {
-    if (!confirm(`将用官方预训练权重对${scope}生成草稿。\n\n`
-                 + (only ? '只影响新上传的图，已修正的其他图不会被覆盖。\n\n' : '')
-                 + '确定继续？')) return;
+    let msg;
+    if (only) {
+      msg = `将用官方预训练权重对${scope}生成草稿。\n\n`
+          + '只影响新上传的图，已修正的其他图不会被覆盖。\n\n';
+    } else if (editedTotal > 0) {
+      msg = `⚠ 当前有 ${editedTotal} 条人工修正。\n\n`
+          + '全量预标注会重写全部标注文件，这些修正会被清除，且无法撤销。\n'
+          + '（records/修正记录.csv 的历史记录还在，'
+          + '但图上的修改会回到模型原始输出）\n\n';
+    } else {
+      msg = `将用官方预训练权重对${scope}生成草稿。\n\n`;
+    }
+    if (!confirm(msg + '确定继续？')) return;
   }
 
   $('progressWrap').classList.remove('hidden');
   try {
     const r = await api('/api/prelabel/start', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model: 'official', images: only }),
+      // force=true 表示「用户已经在弹窗里确认过覆盖」，服务端据此放行
+      body: JSON.stringify({ model: 'official', images: only, force: true }),
     });
     pollProgress(r.job_id, 'official', o.pickAfter || null);
   } catch (e) { toast('启动失败: ' + e.message, true); }
@@ -1654,7 +1670,8 @@ async function startRelabel() {
   try {
     const r = await api('/api/prelabel/start', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model: 'custom' }),
+      // 上面的 confirm 已经明确告知会覆盖修正，这里带 force 让服务端放行
+      body: JSON.stringify({ model: 'custom', force: true }),
     });
     pollProgress(r.job_id, 'custom');
   } catch (e) { toast('启动失败: ' + e.message, true); }

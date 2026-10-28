@@ -98,6 +98,7 @@ data/images/2.jpg
 data/images/3.jpg
 data/images/IMG_8072.webp
 data/images/IMG_8073.webp
+data/images/IMG_8073_2.webp
 data/annotations/1.json
 data/annotations/2.json
 data/annotations/3.json
@@ -106,3 +107,9 @@ data/annotations/IMG_8073.json
 
 # 手动备份目录（排查事故用，确认无碍后删）
 data/_bak_ann_*/
+
+# 导出时把「上次有、这次没有」的残留挪到这里（不删，见 exporter.py 注释）
+dataset/_stale/
+
+# 未审核的草稿标注（新上传的图还没人工过一遍，不该进训练集）
+data/_unreviewed/

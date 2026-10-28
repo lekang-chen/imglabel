@@ -591,6 +591,27 @@ def api_prelabel_start():
             }), 400
         return jsonify({"error": "data/images/ 目录里没有图片"}), 400
 
+    # 全量预标注 / 回标都会重写全部标注文件，人工修正跟着没。
+    # 之前只靠前端一句 confirm，用户在电脑上点「预标注」就把 60 条修正覆盖了
+    # （2026-10-28 真事，最后靠 git 里的版本捞回来）。
+    # 这里加一道服务端闸门：不带 force=true 的全量请求，只要存在人工修正就拒绝，
+    # 把「有多少条会没」这个数字直接摆到调用方面前。
+    force = bool(body.get("force"))
+    if only is None and not force:
+        edited = 0
+        for n in images:
+            a = load_anno(n)
+            if a is not None:
+                edited += a.edited_count()
+        if edited > 0:
+            return jsonify({
+                "error": ("已有 %d 条人工修正，全量%s会覆盖它们。"
+                          "确认要覆盖请加 force=true。" % (
+                              edited, "回标" if mode == "custom" else "预标注")),
+                "edited": edited,
+                "need_force": True,
+            }), 409
+
     state = load_state()
     job_id = "job_%d_%d" % (int(time.time()), len(job_manager.jobs))
     job = _new_job(job_id, len(images))

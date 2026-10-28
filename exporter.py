@@ -204,9 +204,19 @@ def export_dataset(annotations, out_dir, image_dir, val_ratio=VAL_RATIO,
         for i, c in enumerate(CLASSES):
             f.write("  %d: %s\n" % (i, c))
 
-    # 4) 清理上一次导出留下的残留文件
-    #    只删「这次没写、但目录里有」的文件，且逐个删（不整目录删）。
-    removed = 0
+    # 4) 处理上一次导出留下的残留文件
+    #    只动「这次没写、但目录里有」的文件。
+    #
+    #    【为什么不删，而是挪走】
+    #    每次导出都会按 val_ratio 重新划分 train/val，图片总数一变，
+    #    归属就跟着变，于是「这次没写」的残留可能几十上百个。
+    #    原先这里逐个 os.remove，在开了批量删除保护（杀软、企业安全策略、
+    #    某些回收站软件）的机器上会触发拦截，表现是**页面请求直接断开**，
+    #    前端只看到 `Failed to fetch`，服务端连一行访问日志都来不及写。
+    #    挪到 dataset/_stale/ 是 rename，不产生删除动作，不会被拦，
+    #    而且同名覆盖，不会越滚越大；万一哪天要找回旧图也还在。
+    stale_root = os.path.join(out_dir, "_stale")
+    moved = 0
     for sub in ("images", "labels", "masks", "semantic"):
         for split in ("train", "val"):
             d = os.path.join(out_dir, sub, split)
@@ -214,13 +224,16 @@ def export_dataset(annotations, out_dir, image_dir, val_ratio=VAL_RATIO,
                 continue
             for fn in os.listdir(d):
                 p = os.path.join(d, fn)
-                if os.path.isfile(p) and p not in written:
-                    try:
-                        os.remove(p)
-                        removed += 1
-                    except OSError:
-                        pass
-    stats["removed_stale"] = removed
+                if not os.path.isfile(p) or p in written:
+                    continue
+                dst = os.path.join(stale_root, sub, split, fn)
+                try:
+                    os.makedirs(os.path.dirname(dst), exist_ok=True)
+                    os.replace(p, dst)   # 同名直接覆盖，不累积
+                    moved += 1
+                except OSError:
+                    pass
+    stats["stale_moved"] = moved
 
     return stats
 
