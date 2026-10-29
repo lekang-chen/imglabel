@@ -1081,7 +1081,16 @@ if __name__ == "__main__":
     lan = ("--lan" in sys.argv) or (os.environ.get("IMGLABEL_LAN") == "1")
     host = "0.0.0.0" if lan else "127.0.0.1"
 
-    port = pick_port(5000, host=host)
+    # --port N：指定首选端口。tools/tunnel.py 用它挑一个确实空闲的端口再起服务，
+    # 否则 pick_port 一旦顺延，隧道就会连到错的地方。被占用时仍然自动顺延。
+    prefer = 5000
+    if "--port" in sys.argv:
+        try:
+            prefer = int(sys.argv[sys.argv.index("--port") + 1])
+        except (IndexError, ValueError):
+            print("  [警告] --port 后面要跟一个数字，已改用 5000")
+
+    port = pick_port(prefer, host=host)
     url = "http://127.0.0.1:%d" % port
 
     print("=" * 64)

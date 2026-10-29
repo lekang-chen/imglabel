@@ -120,3 +120,7 @@ model/_backup/
 
 # 训练进度用的运行时文件（pid 与启动时刻，本机有效，换机器无意义）
 data/train_meta.json
+
+# Cloudflare 隧道工具（52 MB 的单文件二进制，不进版本库）
+# 换机器时从 https://github.com/cloudflare/cloudflared/releases 下 windows-amd64
+tools/cloudflared.exe
