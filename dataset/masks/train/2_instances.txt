@@ -1,0 +1,5 @@
+1 couch
+2 couch
+3 chair
+4 book
+5 book

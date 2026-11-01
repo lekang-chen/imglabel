@@ -1,5 +1,2 @@
 1 dining table
 2 bottle
-3 cup
-4 book
-5 book

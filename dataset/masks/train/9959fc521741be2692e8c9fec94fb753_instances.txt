@@ -1,0 +1,7 @@
+1 laptop
+2 bottle
+3 cup
+4 bottle
+5 bottle
+6 book
+7 bottle
