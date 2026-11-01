@@ -42,6 +42,17 @@ MODEL_DIR = os.path.join(BASE_DIR, "model")
 RUNS_DIR = os.path.join(BASE_DIR, "runs")
 BACKUP_DIR = os.path.join(MODEL_DIR, "_backup")   # 被覆盖前的旧权重
 BACKUP_KEEP = 3                                    # 只留最近 3 份（每份 6~7 MB）
+# 【续训配方的来历】
+# 这套超参不是拍脑袋定的，是第七~十一轮实验里唯一一条「检测和掩码同时涨」的
+# （见 ai_log.md 的 iter3_long：0.733 / 0.583，R4 的 0.580 就出自它）。
+# 关键几点，缺一个就退化：
+#   · optimizer=SGD + 小 lr0=8e-4：续训不能给大学习率
+#     （auto 会自己挑 AdamW 7e-4，实测一个 epoch 就把掩码从 0.580 打到 0.530）
+#   · freeze=10：冻结主干，只动检测头与分割分支，抗遗忘
+#   · copy_paste=0.5 + scale=0.7 + degrees=8：实例分割专用增强，靠它抗遗忘
+#   · cls=1.2：分类损失提权，压「椅子判成沙发」这类跨类混淆
+#   · cos_lr + close_mosaic=20 + patience=40：长训练要余弦退火，最后 20 轮关掉 mosaic
+FT_LR = 8e-4
 
 # 十类词表（与 core.py 保持一致）
 CLASSES = [
@@ -354,6 +365,18 @@ def main():
                         help="设备，如 0 / cpu")
     parser.add_argument("--weights", type=str, default=None,
                         help="基线权重路径")
+    parser.add_argument("--out", type=str, default=None,
+                        help="把最佳权重写到指定路径（默认写 model/best.pt）。"
+                             "自主学习用它产出「候选权重」，好让决策层先评估再决定要不要采纳")
+    parser.add_argument("--lr0", type=float, default=None,
+                        help="初始学习率。从已有权重续训时要调小（如 0.002），"
+                             "否则一步就把学到的走样了")
+    parser.add_argument("--patience", type=int, default=None,
+                        help="早停耐心轮数（默认 50）")
+    parser.add_argument("--ft", action="store_true",
+                        help="快速微调模式：小学习率、关掉 mosaic / copy_paste、"
+                             "不做 warmup。从已经调好的权重再学时用这条路，"
+                             "默认那套强增强会把好不容易学到的掩码打坏")
     args = parser.parse_args()
 
     print("=" * 64)
@@ -375,6 +398,23 @@ def main():
         cfg["imgsz"] = args.imgsz
     if args.device:
         cfg["device"] = args.device
+    if args.lr0:
+        cfg["lr0"] = args.lr0
+    if args.patience:
+        cfg["patience"] = args.patience
+    if args.ft:
+        # 续训配方（iter3_long）：参数写在 cfg 里，下面统一塞给 model.train
+        cfg.setdefault("optimizer", "SGD")     # 钉死优化器，否则 lr0 会被 auto 覆盖
+        cfg.setdefault("lr0", FT_LR)
+        cfg.setdefault("lrf", 0.01)
+        cfg["cos_lr"] = True
+        cfg["freeze"] = 10
+        cfg["close_mosaic"] = 20
+        cfg["copy_paste"] = 0.5
+        cfg["scale"] = 0.7
+        cfg["degrees"] = 8.0
+        cfg["cls"] = 1.2
+        cfg.setdefault("patience", 40)
 
     print("[2/4] 自动选择的训练配置：")
     print("        设备      : %s (%s, 显存 %.1f GB)"
@@ -407,11 +447,20 @@ def main():
             name="seg",
             exist_ok=True,
             pretrained=True,
-            optimizer="auto",
+            optimizer=cfg.get("optimizer", "auto"),
             seed=42,
+            lr0=cfg.get("lr0", 0.01),
+            lrf=cfg.get("lrf", 0.01),
+            cos_lr=cfg.get("cos_lr", False),
+            freeze=cfg.get("freeze", None),
+            close_mosaic=cfg.get("close_mosaic", 10),
+            copy_paste=cfg.get("copy_paste", 0.0),
+            scale=cfg.get("scale", 0.5),
+            degrees=cfg.get("degrees", 0.0),
+            cls=cfg.get("cls", 0.5),
             # 小数据集容易过拟合，加一点正则
             weight_decay=0.0005,
-            patience=50,
+            patience=cfg.get("patience", 50),
             verbose=True,
             plots=True,
         )
@@ -434,6 +483,18 @@ def main():
             _cleanup_train_yaml()
             sys.exit(1)
         src = max(cands, key=os.path.getmtime)
+
+    # --out 是「自主学习」用的候选权重出口：不覆盖 model/best.pt，
+    # 先让决策层在验证集上评估，指标过线才由 autolearn 换上去。
+    if args.out:
+        dst = os.path.abspath(args.out)
+        os.makedirs(os.path.dirname(dst), exist_ok=True)
+        shutil.copy2(src, dst)
+        print("[4/4] 训练完成，耗时 %.1f 分钟" % ((time.time() - t0) / 60))
+        print("        候选权重已输出: %s（model/best.pt 未被改动）" % dst)
+        _cleanup_train_yaml()
+        restore_data_yaml_path()
+        return 0
 
     dst = os.path.join(MODEL_DIR, "best.pt")
     old = backup_existing_best(dst)

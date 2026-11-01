@@ -36,10 +36,11 @@ from flask import (Flask, jsonify, request, send_file,
                    send_from_directory, abort)
 
 from core import (CLASSES, IMAGE_EXTS, Annotation, Object, class_color,
-                  point_in_polygon)
+                  pid_alive, point_in_polygon)
 from exporter import export_dataset, validate_dataset, format_report
 from prelabel import JobManager, run_prelabel_job, run_relabel_job
 from train_progress import human_duration, parse_train_log
+import autolearn
 
 # ---------------------------------------------------------------------------
 # 路径配置（全部相对于项目根目录，保证换电脑也能跑）
@@ -777,35 +778,16 @@ def api_train():
     return jsonify({"ok": True, "log": log_file})
 
 
-def _pid_alive(pid):
-    """进程还在不在。
-
-    Windows 上不能用 os.kill(pid, 0) —— 那边没有「发 0 号信号探活」的语义，
-    实际会走到 TerminateProcess，等于直接把训练杀了。改用
-    OpenProcess + WaitForSingleObject：句柄等不到信号（WAIT_TIMEOUT）才说明还活着。
-    """
-    try:
-        pid = int(pid)
-    except (TypeError, ValueError):
-        return False
-    if pid <= 0:
+def _train_busy():
+    """训练进程是否还在跑（自主学习用它避让——同一块显卡不能同时跑两个）。"""
+    if not os.path.exists(TRAIN_META):
         return False
     try:
-        if os.name == "nt":
-            import ctypes
-
-            SYNCHRONIZE = 0x00100000
-            h = ctypes.windll.kernel32.OpenProcess(SYNCHRONIZE, False, pid)
-            if not h:
-                return False
-            try:
-                return ctypes.windll.kernel32.WaitForSingleObject(h, 0) == 0x102
-            finally:
-                ctypes.windll.kernel32.CloseHandle(h)
-        os.kill(pid, 0)
-        return True
-    except OSError:
+        with open(TRAIN_META, encoding="utf-8") as f:
+            meta = json.load(f)
+    except (OSError, ValueError):
         return False
+    return pid_alive(meta.get("pid"))
 
 
 @app.route("/api/train/status")
@@ -831,7 +813,7 @@ def api_train_status():
         except (OSError, ValueError):
             meta = {}
 
-    alive = _pid_alive(meta.get("pid"))
+    alive = pid_alive(meta.get("pid"))
     # 只信 meta 里的启动时刻。不要拿日志文件的 ctime 兜底：训练开始时是
     # open(w) 截断重写，文件创建时间还停在很久以前，算出来会是「已用 17 分钟」这种假数。
     # 拿不到就不显示已用时间，宁可少一条信息也不编一条。
@@ -869,6 +851,95 @@ def api_train_log():
     with open(p, encoding="utf-8", errors="replace") as f:
         content = f.read()
     return jsonify({"log": content[-20000:]})
+
+
+# ---------------------------------------------------------------------------
+# 自主学习（持续微调）
+#
+# 和「训练」按钮的区别：
+#   训练   —— 人点一下，从官方权重重来一遍，结果直接覆盖 best.pt
+#   自主学习 —— 攒够修正自己跑一代，从当前 best.pt 续训，先出候选权重，
+#               验证集过线才换上去。指挥权在人，执行权在机器。
+# ---------------------------------------------------------------------------
+
+def _prelabel_busy():
+    """预标注/回标还在跑吗（它也吃显卡，不能和训练撞车）。"""
+    for job in list(job_manager.jobs.values()):
+        if getattr(job, "status", None) in ("pending", "running"):
+            return True
+    return False
+
+
+def _gpu_busy():
+    return _train_busy() or _prelabel_busy()
+
+
+@app.route("/api/autolearn")
+def api_autolearn_status():
+    return jsonify(autolearn.status(busy=_gpu_busy()))
+
+
+@app.route("/api/autolearn/config", methods=["POST"])
+def api_autolearn_config():
+    """开关与阈值。改完立刻生效，巡检线程下一轮就会按新设置判断。"""
+    body = request.get_json(silent=True) or {}
+    cfg = autolearn.load_cfg()
+
+    if "threshold" in body:
+        try:
+            th = int(body["threshold"])
+        except (TypeError, ValueError):
+            return jsonify({"error": "阈值要是数字"}), 400
+        cfg["threshold"] = max(5, min(200, th))
+
+    if "strategy" in body:
+        st = str(body["strategy"])
+        if st not in (autolearn.STRATEGY_FT, autolearn.STRATEGY_RETRAIN):
+            return jsonify({"error": "策略只能是 ft（快速微调）或 retrain（基座重训）"}), 400
+        cfg["strategy"] = st
+
+    if "enabled" in body:
+        on = bool(body["enabled"])
+        cfg = autolearn.set_enabled(cfg, on, autolearn.scan_edited())
+        state = load_state()
+        log_action(state, "自主学习", "开启" if on else "关闭")
+        save_state(state)
+
+    autolearn.save_cfg(cfg)
+    return jsonify(autolearn.status(busy=_gpu_busy()))
+
+
+@app.route("/api/autolearn/run", methods=["POST"])
+def api_autolearn_run():
+    """立刻学一代（不用等攒够）。跑在后台线程，前端轮询状态。"""
+    if autolearn.read_lock():
+        return jsonify({"error": "上一代还在学，等它结束"}), 409
+    if _gpu_busy():
+        return jsonify({"error": "训练或预标注正在占用显卡，等它跑完再学"}), 409
+
+    def worker():
+        autolearn.run_round()
+
+    threading.Thread(target=worker, daemon=True).start()
+    return jsonify({"ok": True, "message": "已开始学习第一代，进度看左侧状态"})
+
+
+def autolearn_watcher():
+    """后台巡检：每 60 秒问一次「攒够了吗」。
+
+    为什么是 60 秒而不是实时：判据要扫全库 157 个标注文件，
+    太频繁没必要；而学习一代本身要几分钟，多等一分钟无感。
+    """
+    while True:
+        time.sleep(60)
+        try:
+            autolearn.tick(busy=_gpu_busy())
+        except Exception as exc:  # noqa: BLE001
+            # 巡检线程绝不能死：死了以后开关还亮着，但永远不会再学
+            try:
+                autolearn._log("[巡检异常] %s" % exc)
+            except Exception:  # noqa: BLE001
+                pass
 
 
 # ---------------------------------------------------------------------------
@@ -1116,4 +1187,6 @@ if __name__ == "__main__":
     print("=" * 64)
 
     threading.Thread(target=open_browser, args=(url,), daemon=True).start()
+    # 自主学习巡检：开关打开后，攒够修正就自己学一代（默认关闭，界面上开）
+    threading.Thread(target=autolearn_watcher, daemon=True).start()
     app.run(host=host, port=port, debug=False, threaded=True)

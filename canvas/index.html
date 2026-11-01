@@ -89,6 +89,18 @@
       <button class="btn btn-ghost" id="btnRecords">修正记录</button>
     </div>
 
+    <!-- 自主学习：攒够修正自己学一代，过线才换权重 -->
+    <div class="auto-learn" id="autoLearnBox">
+      <label class="auto-head">
+        <input type="checkbox" id="autoLearn">
+        <span class="auto-name">自主学习</span>
+        <span class="auto-badge" id="autoBadge">关</span>
+      </label>
+      <div class="auto-line" id="autoLine">开启后，攒够规定条数的修正会自动微调一代</div>
+      <div class="auto-line auto-sub" id="autoSub"></div>
+      <button class="auto-run hidden" id="btnAutoRun">立即学一代</button>
+    </div>
+
     <div class="progress-wrap hidden" id="progressWrap">
       <div class="progress-bar"><div class="progress-fill" id="progressFill"></div></div>
       <div class="progress-text mono" id="progressText">准备中…</div>

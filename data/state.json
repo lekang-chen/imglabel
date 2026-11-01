@@ -3772,6 +3772,16 @@
       "time": "2026-10-28 21:31:30",
       "action": "开始训练",
       "detail": "D:\\imglabel\\.venv\\Scripts\\python.exe D:\\imglabel\\train.py --epochs 2"
+    },
+    {
+      "time": "2026-11-01 15:15:01",
+      "action": "自主学习",
+      "detail": "开启"
+    },
+    {
+      "time": "2026-11-01 15:24:43",
+      "action": "自主学习",
+      "detail": "开启"
     }
   ],
   "train_history": [

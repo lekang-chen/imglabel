@@ -594,6 +594,74 @@ def test_train_backup_keep_baseline():
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+# ---------------------------------------------------------------------------
+def test_autolearn():
+    """
+    [13] 自主学习：什么时候学、学完该不该采纳、配置怎么落盘
+
+    这里测的三件事，正好对应三个真会出问题的地方：
+      1. 阈值判据写错 -> 要么永远不学，要么每改一笔就学（显卡被拖死）
+      2. 采纳闸门写松 -> 越练越差还自动换上去，验收用的 best.pt 被悄悄换掉
+      3. 首次开启没对齐基准 -> 只是点了个开关，历史上攒的 60 多条修正
+         立刻触发一整代训练，用户莫名其妙等三分钟
+    """
+    print("\n[13] 自主学习判据")
+    import json
+
+    import autolearn as al
+
+    cfg = {"enabled": False, "threshold": 20, "learned_edited": 60,
+           "round": 0, "running": False}
+    check("关闭状态下永远不学", not al.should_learn(cfg, 999))
+    on = dict(cfg, enabled=True)
+    check("差 1 条不学", not al.should_learn(on, 79))
+    check("刚好够阈值就学", al.should_learn(on, 80))
+    check("待学条数 = 当前已修正 - 上次学过的", al.pending(on, 85) == 25)
+    check("计数倒挂也不出现负数", al.pending(on, 50) == 0)
+    check("上一代还在跑时不重复触发", not al.should_learn(dict(on, running=True), 999))
+
+    base = {"box_map50": 0.728, "mask_map50": 0.580}
+    ok, _ = al.decide_accept(base, {"box_map50": 0.731, "mask_map50": 0.585})
+    check("小幅提升 -> 采纳", ok)
+    ok, _ = al.decide_accept(base, {"box_map50": 0.727, "mask_map50": 0.578})
+    check("噪声带内的微降 -> 仍然采纳（否则永远学不动）", ok)
+    ok, why = al.decide_accept(base, {"box_map50": 0.746, "mask_map50": 0.530})
+    check("掩码掉 5 个点 -> 拒绝（检测涨也不行）", (not ok) and ("掩码" in why), why)
+    ok, why = al.decide_accept(base, {"box_map50": 0.700, "mask_map50": 0.581})
+    check("检测掉 3 个点 -> 拒绝（掩码涨也不行）", (not ok) and ("检测" in why), why)
+    ok, _ = al.decide_accept({}, {"box_map50": 0.5, "mask_map50": 0.4})
+    check("没有基线 -> 直接采纳当新基线", ok)
+
+    tmp = tempfile.mkdtemp(prefix="alcfg_")
+    try:
+        p = os.path.join(tmp, "cfg.json")
+        with open(p, "w", encoding="utf-8") as f:
+            f.write('{"enabled": true}')
+        c = al.load_cfg(p)
+        check("旧配置缺字段用默认值补齐",
+              c["threshold"] == al.DEFAULT_THRESHOLD and c["enabled"] is True)
+        c["round"] = 3
+        al.save_cfg(c, p)
+        check("写回后能读出新值", al.load_cfg(p)["round"] == 3)
+
+        c2 = al.set_enabled({"enabled": False, "round": 0, "learned_edited": 0}, True, 62)
+        check("首次开启把基准对齐到现在（不翻旧账）", c2["learned_edited"] == 62)
+        c3 = al.set_enabled({"enabled": False, "round": 2, "learned_edited": 62}, True, 90)
+        check("已学过的不重置基准", c3["learned_edited"] == 62)
+
+        ad = os.path.join(tmp, "ann")
+        os.makedirs(ad)
+        for i, edited in enumerate([True, True, False]):
+            ann = Annotation("i%d.jpg" % i, 10, 10,
+                             [Object("cup", [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0]],
+                                     edited=edited)])
+            with open(os.path.join(ad, "i%d.json" % i), "w", encoding="utf-8") as f:
+                json.dump(ann.to_dict(), f)
+        check("scan_edited 只数被人改过的对象", al.scan_edited(ad) == 2)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 if __name__ == "__main__":
     print("=" * 60)
     print("核心逻辑自测")
@@ -611,6 +679,7 @@ if __name__ == "__main__":
     test_prelabel_overwrite_guard()
     test_train_progress()
     test_train_backup_keep_baseline()
+    test_autolearn()
     print("\n" + "=" * 60)
     print("结果: %d 通过, %d 失败" % (PASS, FAIL))
     print("=" * 60)

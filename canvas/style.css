@@ -144,6 +144,41 @@ body {
 .tool-row { display: flex; gap: 6px; padding: 8px 12px 0; }
 .tool-row .btn { flex: 1; }
 
+/* ---------------- 自主学习 ---------------- */
+/* 不抢视觉重心：默认是一行小字 + 开关，只有真的在学时边框才变色 */
+.auto-learn {
+  margin: 10px 12px 2px; padding: 8px 10px;
+  border: 1px solid var(--line); border-radius: var(--radius-sm);
+  background: var(--panel-2);
+}
+.auto-learn.on { border-color: var(--accent); background: var(--accent-soft); }
+.auto-learn.learning { border-color: var(--accent); }
+.auto-head {
+  display: flex; align-items: center; gap: 6px;
+  cursor: pointer; user-select: none;
+}
+.auto-head input { width: 13px; height: 13px; margin: 0; accent-color: var(--accent); cursor: pointer; }
+.auto-name { font-size: 12px; font-weight: 500; color: var(--text); }
+.auto-badge {
+  margin-left: auto; padding: 1px 6px; border-radius: 999px;
+  font-size: 10px; color: var(--text-2); background: var(--line);
+}
+.auto-badge.on { color: #fff; background: var(--accent); }
+.auto-badge.ok { color: #fff; background: var(--ok); }
+.auto-badge.bad { color: #fff; background: var(--warn); }
+.auto-line {
+  margin-top: 5px; font-size: 11px; line-height: 1.45; color: var(--text-2);
+}
+.auto-sub { color: var(--text-3); }
+.auto-run {
+  width: 100%; margin-top: 6px; padding: 4px 0;
+  border: 1px solid var(--line-2); border-radius: var(--radius-sm);
+  background: var(--panel); color: var(--text-2); font-size: 11px;
+  font-family: inherit; cursor: pointer;
+}
+.auto-run:hover { border-color: var(--accent); color: var(--accent); }
+.auto-run:disabled { opacity: .5; cursor: default; }
+
 /* ---------------- 进度条 ---------------- */
 .progress-wrap { padding: 10px 12px 4px; }
 .progress-bar { height: 3px; background: var(--line); border-radius: 2px; overflow: hidden; }

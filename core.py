@@ -40,6 +40,41 @@ IMAGE_EXTS = (".jpg", ".jpeg", ".png", ".bmp", ".webp")
 
 
 # ---------------------------------------------------------------------------
+# 进程探活：全项目唯一的一处定义（app 判训练进程、autolearn 判学习锁）
+#
+# 【为什么不能用 os.kill(pid, 0)】
+# 那是 POSIX 的「发 0 号信号探活」语义，Windows 上没有这个语义，
+# os.kill 会直接走 TerminateProcess —— 探活变成谋杀，训练当场被干掉。
+# 改用 OpenProcess + WaitForSingleObject：等不到信号（WAIT_TIMEOUT=0x102）
+# 才说明进程还活着。
+# ---------------------------------------------------------------------------
+def pid_alive(pid):
+    """进程还在不在。用于区分「还在跑」和「进程没了但没写完成标记」。"""
+    try:
+        pid = int(pid)
+    except (TypeError, ValueError):
+        return False
+    if pid <= 0:
+        return False
+    try:
+        if os.name == "nt":
+            import ctypes
+
+            SYNCHRONIZE = 0x00100000
+            h = ctypes.windll.kernel32.OpenProcess(SYNCHRONIZE, False, pid)
+            if not h:
+                return False
+            try:
+                return ctypes.windll.kernel32.WaitForSingleObject(h, 0) == 0x102
+            finally:
+                ctypes.windll.kernel32.CloseHandle(h)
+        os.kill(pid, 0)
+        return True
+    except OSError:
+        return False
+
+
+# ---------------------------------------------------------------------------
 # 十类词表（任务书明确规定"不得更改"）
 # 英文名是模型调用用名，顺序即 YOLO 训练时的类别编号 0~9
 # ---------------------------------------------------------------------------

@@ -1116,6 +1116,11 @@ function bindEvents() {
   $('btnCompare').onclick = showCompare;
   $('btnRecords').onclick = showRecords;
 
+  // 自主学习开关（默认关闭，开了才自己跑）
+  $('autoLearn').onchange = e => toggleAuto(e.target.checked);
+  $('btnAutoRun').onclick = runAutoNow;
+  startAutoWatch();
+
   // 训练进度浮层
   $('trainClose').onclick = () => {
     $('trainHud').classList.add('hidden');
@@ -1929,6 +1934,120 @@ async function showTrainLog() {
   } catch (e) {}
 }
 
+// ---------------------------------------------------------------- 自主学习
+// 和「训练」的区别：训练是人点一下、从官方权重重来、直接覆盖 best.pt；
+// 自主学习是攒够修正自己跑一代、从当前 best.pt 续训、先出候选权重，
+// 验证集不退化才换上去。
+const AUTO = { timer: null, last: null };
+
+const AUTO_STAGE = {
+  export: '正在导出数据集',
+  train: '正在微调候选权重',
+  eval: '正在验证集上打分',
+  gate: '正在判定要不要采纳',
+};
+
+function autoLine(s) {
+  if (s.running) {
+    const stage = AUTO_STAGE[s.stage] || '准备中';
+    return `第 ${s.round + 1} 代 · ${stage}…`;
+  }
+  if (!s.enabled) return `已关闭：只在点「训练」时才学（当前已学 ${s.round} 代）`;
+  if (s.pending >= s.threshold) return `已攒 ${s.pending} 条修正，下一分钟自动开跑`;
+  return `已攒 ${s.pending}/${s.threshold} 条修正，还差 ${s.threshold - s.pending} 条学一代`;
+}
+
+function autoSub(s) {
+  if (s.running) return '后台运行，可以继续标注；学完会告诉你结果';
+  const r = s.last_result;
+  if (!r) return s.enabled ? '从开启那一刻起算，不翻旧账' : '';
+  const dm = (r.new && r.old
+    && r.new.mask_map50 != null && r.old.mask_map50 != null)
+    ? r.new.mask_map50 - r.old.mask_map50 : null;
+  const tail = dm == null ? '' : `（掩码 ${dm >= 0 ? '+' : ''}${dm.toFixed(3)}）`;
+  return `上一代 ${r.gen}：${r.accepted ? '已采纳' : '未采纳'}${tail}`;
+}
+
+function renderAuto(s) {
+  AUTO.last = s;
+  const box = $('autoLearnBox');
+  if (!box) return;
+  box.classList.toggle('on', !!s.enabled);
+  box.classList.toggle('learning', !!s.running);
+  $('autoLearn').checked = !!s.enabled;
+
+  const badge = $('autoBadge');
+  let cls = 'auto-badge';
+  let text = '关';
+  if (s.running) { cls += ' on'; text = '学习中'; }
+  else if (s.enabled) { cls += ' on'; text = s.round ? `${s.round} 代` : '待学'; }
+  badge.className = cls;
+  badge.textContent = text;
+
+  $('autoLine').textContent = autoLine(s);
+  $('autoSub').textContent = autoSub(s);
+
+  const btn = $('btnAutoRun');
+  btn.classList.toggle('hidden', !s.enabled);
+  btn.disabled = !!s.running || !!s.busy;
+  btn.textContent = s.running ? '学习中…' : (s.busy ? '显卡占用中' : '立即学一代');
+}
+
+async function pollAuto() {
+  let s;
+  try { s = await api('/api/autolearn'); } catch (e) { return; }
+  const was = AUTO.last;
+  renderAuto(s);
+  // 学完要主动说一声：它是自己跑的，不说用户不知道权重已经换了
+  if (was && was.running && !s.running && s.last_result) {
+    const r = s.last_result;
+    if (r.accepted) {
+      toast(`第 ${r.gen} 代学完，指标未退化，已启用新权重`);
+    } else {
+      toast(`第 ${r.gen} 代未采纳：${r.reason || '见 data/autolearn.log'}`, true);
+    }
+  }
+}
+
+function startAutoWatch() {
+  if (AUTO.timer) return;
+  pollAuto();
+  AUTO.timer = setInterval(pollAuto, 5000);
+}
+
+async function toggleAuto(on) {
+  try {
+    const s = await api('/api/autolearn/config', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ enabled: on }),
+    });
+    renderAuto(s);
+    toast(on ? '自主学习已开启：攒够修正会自动微调一代' : '自主学习已关闭');
+  } catch (e) {
+    $('autoLearn').checked = !on;
+    toast('设置失败: ' + e.message, true);
+  }
+}
+
+async function runAutoNow() {
+  const s = AUTO.last;
+  if (s && !confirm(
+    '立刻学一代？\n\n'
+    + '· 会用「库里全部标注」重导数据集，再从当前 best.pt 续训（约 3 分钟，早停会提前收）。\n'
+    + '· 产出的是候选权重，只有验证集指标不比现在差才会换成 best.pt。\n'
+    + '· 变差的话候选会留档作废，best.pt 一个字节都不动。\n'
+    + '· 这是要占显卡的，期间可以继续标注，但别同时点「预标注 / 训练」。'
+  )) return;
+  try {
+    await api('/api/autolearn/run', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({}),
+    });
+    toast('已开始学习，左侧会显示进度');
+    pollAuto();
+  } catch (e) { toast('启动失败: ' + e.message, true); }
+}
+
 // ---------------------------------------------------------------- 对比/记录
 async function showCompare() {
   const r = await api('/api/comparison');
@@ -2033,6 +2152,9 @@ window.__APP__ = {
   pendingDrafts, syncPrelabelBtn,
   // 窄屏抽屉：测试要验证「开一边自动收另一边」和遮罩点击关闭
   toggleDrawer, closeDrawers,
+  // 自主学习：测试要验证开关文案、待学条数与「学完提示」
+  get AUTO() { return AUTO; },
+  renderAuto, autoLine, autoSub,
 };
 
 // 自动化测试脚本（仅在带 ?uitest=1 时按需加载）

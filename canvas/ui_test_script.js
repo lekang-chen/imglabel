@@ -819,6 +819,50 @@
       btn.textContent = '训练';
     }
 
+    // ---------- T16 自主学习状态卡 ----------
+    // 【为什么值得单测】这张卡片是「机器自己跑训练」的唯一出口：文案错了，
+    // 用户就不知道它在干什么、也不知道为什么权重没变。三种状态都要说清楚。
+    {
+      const line = document.getElementById('autoLine');
+      const sub = document.getElementById('autoSub');
+      const badge = document.getElementById('autoBadge');
+      const runBtn = document.getElementById('btnAutoRun');
+      const base = { enabled: false, running: false, round: 0, pending: 0,
+                     threshold: 20, stage: 'idle', last_result: null, busy: false };
+
+      A.renderAuto(Object.assign({}, base));
+      ok('关闭时徽标写「关」', badge.textContent === '关', badge.textContent);
+      ok('关闭时说明只在你点训练时才学', /只在点「训练」/.test(line.textContent), line.textContent);
+
+      A.renderAuto(Object.assign({}, base, { enabled: true, pending: 7 }));
+      ok('待学条数写成 7/20', /7\/20/.test(line.textContent), line.textContent);
+      ok('还差几条也写出来', /还差 13 条/.test(line.textContent), line.textContent);
+
+      A.renderAuto(Object.assign({}, base, { enabled: true, running: true, round: 2,
+                                            stage: 'train', busy: true }));
+      ok('学习中写明第几代与阶段',
+         /第 3 代/.test(line.textContent) && /微调候选权重/.test(line.textContent),
+         line.textContent);
+      ok('学习中「立即学一代」禁用', runBtn.disabled === true);
+
+      A.renderAuto(Object.assign({}, base, {
+        enabled: true, round: 2,
+        last_result: { gen: 2, accepted: true, reason: 'ok',
+                       old: { mask_map50: 0.58 }, new: { mask_map50: 0.591 } },
+      }));
+      ok('采纳后写出掩码变化',
+         /已采纳/.test(sub.textContent) && /\+0\.011/.test(sub.textContent), sub.textContent);
+
+      A.renderAuto(Object.assign({}, base, {
+        round: 2,
+        last_result: { gen: 2, accepted: false, reason: '掩码掉了',
+                       old: { mask_map50: 0.58 }, new: { mask_map50: 0.52 } },
+      }));
+      ok('未采纳时如实写「未采纳」', /未采纳/.test(sub.textContent), sub.textContent);
+
+      A.renderAuto(Object.assign({}, base));
+    }
+
     // ---------- 汇总 ----------
     log.unshift('结果：' + pass + ' 通过 / ' + fail + ' 失败\n');
     return log.join('\n');
