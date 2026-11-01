@@ -29,7 +29,9 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from core import (CLASSES, IMAGE_EXTS, Annotation, Object,
                   instance_from_objects, point_in_polygon, polygon_area,
                   polygon_bbox, semantic_from_objects, simplify_polygon)
-from exporter import export_dataset, export_yolo_label, validate_dataset
+from PIL import Image
+
+from exporter import export_dataset, export_yolo_label, load_val_split, validate_dataset
 
 PASS = 0
 FAIL = 0
@@ -148,7 +150,9 @@ def test_export_and_validate():
         os.makedirs(img_dir, exist_ok=True)
         from PIL import Image
         for i in range(4):
-            Image.new("RGB", (120, 90), (200, 180, 160)).save(
+            # 颜色按 i 变化：内容完全相同的图会被判成重复副本（真实照片不会这样，
+            # 但纯色占位图会），这里让每张都不一样
+            Image.new("RGB", (120, 90), (200 - i, 180, 160 + i)).save(
                 os.path.join(img_dir, "img%d.jpg" % i))
 
         anns = []
@@ -158,7 +162,8 @@ def test_export_and_validate():
             anns.append(Annotation("img%d.jpg" % i, 120, 90, objects=objs))
 
         out_dir = os.path.join(tmp, "dataset")
-        stats = export_dataset(anns, out_dir, img_dir, val_ratio=0.25)
+        stats = export_dataset(anns, out_dir, img_dir, val_ratio=0.25,
+                                 split_path=os.path.join(tmp, "val_split.json"))
         check("导出 4 张", stats["total_images"] == 4)
         check("训练集 3 张", stats["train_images"] == 3, str(stats["train_images"]))
         check("验证集 1 张", stats["val_images"] == 1, str(stats["val_images"]))
@@ -356,8 +361,8 @@ def test_export_clamps_out_of_range():
         # 用 2 张图：导出器会强制留至少 1 张给训练集，
         # 只放 1 张会导致验证集为空、自检报「验证集为空」——
         # 那是切分策略的正常行为，不是坐标问题。
-        for name in ("edge.jpg", "edge2.jpg"):
-            Image.new("RGB", (120, 90), (180, 180, 180)).save(
+        for i, name in enumerate(("edge.jpg", "edge2.jpg")):
+            Image.new("RGB", (120, 90), (180, 180, 180 - i * 20)).save(
                 os.path.join(img_dir, name))
 
         # 故意构造越界多边形：模拟贴边物体的 -0.5 像素
@@ -366,7 +371,8 @@ def test_export_clamps_out_of_range():
         anns = [Annotation(n, 120, 90, objects=[Object("book", list(bad_poly))])
                 for n in ("edge.jpg", "edge2.jpg")]
         out_dir = os.path.join(tmp, "dataset")
-        export_dataset(anns, out_dir, img_dir, val_ratio=0.5)
+        export_dataset(anns, out_dir, img_dir, val_ratio=0.5,
+                       split_path=os.path.join(tmp, "val_split.json"))
 
         lbl_dir = os.path.join(out_dir, "labels", "val")
         if not (os.path.isdir(lbl_dir) and os.listdir(lbl_dir)):
@@ -620,6 +626,14 @@ def test_autolearn():
     check("计数倒挂也不出现负数", al.pending(on, 50) == 0)
     check("上一代还在跑时不重复触发", not al.should_learn(dict(on, running=True), 999))
 
+    # 学法切换：加新图必须改走基座重训，否则冻结的主干学不进新场景
+    check("加 5 张新图 -> 改用基座重训", al.should_switch_to_retrain(157, 162))
+    check("只加 4 张 -> 不动（不值得为它重训 5 分钟）", not al.should_switch_to_retrain(157, 161))
+    check("图没变 -> 继续续训", not al.should_switch_to_retrain(157, 157))
+    check("第一次学（没有上一代张数）-> 按配置走", not al.should_switch_to_retrain(0, 157))
+    check("大库加 10 张（2%）-> 不算数据变了", not al.should_switch_to_retrain(500, 510))
+    check("大库加 16 张（3.2%）-> 算数据变了", al.should_switch_to_retrain(500, 516))
+
     base = {"box_map50": 0.728, "mask_map50": 0.580}
     ok, _ = al.decide_accept(base, {"box_map50": 0.731, "mask_map50": 0.585})
     check("小幅提升 -> 采纳", ok)
@@ -662,6 +676,105 @@ def test_autolearn():
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+# ---------------------------------------------------------------------------
+def test_val_split_is_frozen():
+    """
+    [14] 验证集名单必须固定：加新图不能偷偷换考卷
+
+    【这一条来自一个真实事故】
+    原来是 random.seed(42) + random.sample(range(total), n_val)：种子固定，
+    但采样范围随总数变。150 张时抽 30 个索引、157 张时抽 31 个，同一个种子
+    抽出两个几乎不相交的集合。于是同一份 best.pt 在「150 张的 val」上测出
+    0.728/0.580，在「157 张的 val」上测出 0.760/0.540——两个数字都对，
+    只是考卷换人了。自主学习的闸门就建在这个沙子上：每代重新导出，
+    验证集跟着漂移，判据等于拿两份不同考卷的分数比大小。
+
+    这个测试要钉死三件事：
+      1. 名单一旦落盘，再加多少新图，val 还是那几张
+      2. 新图一律进训练集（它们本来就是「新信息」，该去能学的地方）
+      3. 名单里的图从库中删除后自动退出 val，不会留下空引用
+    """
+    print("\n[14] 验证集名单固定")
+    tmp = tempfile.mkdtemp(prefix="valsplit_")
+    try:
+        img_dir = os.path.join(tmp, "images")
+        os.makedirs(img_dir)
+        for i in range(10):
+            Image.new("RGB", (120, 90), (30 + i * 3, 60, 90)).save(
+                os.path.join(img_dir, "img%d.jpg" % i))
+
+        def mk(names):
+            objs = [Object("cup", [[0.2, 0.2], [0.5, 0.2], [0.5, 0.5], [0.2, 0.5]])]
+            return [Annotation(n, 120, 90, objects=objs) for n in names]
+
+        split = os.path.join(tmp, "val_split.json")
+        base = ["img%d.jpg" % i for i in range(10)]
+
+        s1 = export_dataset(mk(base), os.path.join(tmp, "d1"), img_dir,
+                            val_ratio=0.2, split_path=split)
+        check("首次导出按比例分（10 张 -> 2 张 val）", s1["val_images"] == 2, str(s1["val_images"]))
+        check("首次导出把名单落盘", os.path.exists(split))
+        first = {n for n in os.listdir(os.path.join(tmp, "d1", "images", "val"))}
+        check("名单内容与导出一致", set(load_val_split(split)) == first, str(first))
+
+        # 加 5 张新图：这 5 张必须全进训练集，val 一张不变
+        more = base + ["new%d.jpg" % i for i in range(5)]
+        for i in range(5):
+            Image.new("RGB", (120, 90), (200, 40 + i * 5, 40)).save(
+                os.path.join(img_dir, "new%d.jpg" % i))
+        s2 = export_dataset(mk(more), os.path.join(tmp, "d2"), img_dir,
+                            val_ratio=0.2, split_path=split)
+        second = {n for n in os.listdir(os.path.join(tmp, "d2", "images", "val"))}
+        check("加 5 张新图后验证集不变（同一张考卷）", second == first, str(second))
+        check("新图全进训练集", s2["train_images"] == 13, str(s2["train_images"]))
+        check("验证集仍是 2 张，没有被比例带着漂",
+              s2["val_images"] == 2, str(s2["val_images"]))
+        check("统计里写明是沿用固定名单", "沿用" in s2["val_split_source"],
+              s2["val_split_source"])
+
+        # 名单里删掉一张图（模拟从库里删图）
+        gone = sorted(first)[0]
+        kept = base[:]
+        kept.remove(gone)
+        s3 = export_dataset(mk(kept), os.path.join(tmp, "d3"), img_dir,
+                            val_ratio=0.2, split_path=split)
+        third = {n for n in os.listdir(os.path.join(tmp, "d3", "images", "val"))}
+        check("删图后它退出 val，不留空引用", gone not in third, str(third))
+        check("剩下的验证图照旧", third == first - {gone}, str(third))
+
+        # 同一张图传两次：一张在 val、一张在 train，就是数据泄漏
+        # （模型训练时背下来了，验证时自然"答对"，mAP 虚高）
+        dup_src = os.path.join(img_dir, "img0.jpg")
+        shutil.copy2(dup_src, os.path.join(img_dir, "copy_of_img0.jpg"))
+        leaked = base[:] + ["copy_of_img0.jpg"]
+        cur = load_val_split(split)
+        s5 = export_dataset(mk(leaked), os.path.join(tmp, "d5"), img_dir,
+                            val_ratio=0.2, split_path=split)
+        if "img0.jpg" in cur:
+            check("重复图被判到两边 -> 强制挪进训练集",
+                  s5["duplicates_moved"] == ["img0.jpg"], str(s5["duplicates_moved"]))
+            check("名单也被清掉，下次不用原地再纠",
+                  "img0.jpg" not in load_val_split(split), str(load_val_split(split)))
+            v5 = {n for n in os.listdir(os.path.join(tmp, "d5", "images", "val"))}
+            check("val 里不再有这一对", "img0.jpg" not in v5 and "copy_of_img0.jpg" not in v5,
+                  str(v5))
+        else:
+            s6 = export_dataset(mk(leaked), os.path.join(tmp, "d6"), img_dir,
+                                val_ratio=0.2, split_path=split)
+            check("重复图都在 train 时不触发（没有泄漏）",
+                  s6["duplicates_moved"] == [], str(s6["duplicates_moved"]))
+
+        # 名单文件坏掉不能炸整个导出
+        with open(split, "w", encoding="utf-8") as f:
+            f.write("{ 坏掉的 json")
+        check("名单文件损坏时读成空", load_val_split(split) == [])
+        s4 = export_dataset(mk(base), os.path.join(tmp, "d4"), img_dir,
+                            val_ratio=0.2, split_path=split)
+        check("名单坏了就重新初始化，不报错", s4["val_images"] == 2, str(s4["val_images"]))
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 if __name__ == "__main__":
     print("=" * 60)
     print("核心逻辑自测")
@@ -680,6 +793,7 @@ if __name__ == "__main__":
     test_train_progress()
     test_train_backup_keep_baseline()
     test_autolearn()
+    test_val_split_is_frozen()
     print("\n" + "=" * 60)
     print("结果: %d 通过, %d 失败" % (PASS, FAIL))
     print("=" * 60)

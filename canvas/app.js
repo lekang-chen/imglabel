@@ -1757,7 +1757,8 @@ async function doExport() {
     showModal('导出结果', `
       <div class="kv">
         <dt>训练图片</dt><dd>${s.train_images}</dd>
-        <dt>验证图片</dt><dd>${s.val_images}</dd>
+        <dt>验证图片</dt><dd>${s.val_images}${s.val_split_fixed
+          ? ` <span style="color:var(--text-2);font-size:11px">（固定名单，沿用）</span>` : ''}</dd>
         <dt>标注对象</dt><dd>${s.total_objects}</dd>
         <dt>含标注的图片</dt><dd>${s.images_with_label}</dd>
         <dt>格式校验</dt><dd>${v.passed
@@ -2034,6 +2035,7 @@ async function runAutoNow() {
   if (s && !confirm(
     '立刻学一代？\n\n'
     + '· 会用「库里全部标注」重导数据集，再从当前 best.pt 续训（约 3 分钟，早停会提前收）。\n'
+    + '· 如果比上一代多了 5 张以上新图，会自动改走「基座重训」（约 5 分钟）——续训冻结主干，学不进新场景。\n'
     + '· 产出的是候选权重，只有验证集指标不比现在差才会换成 best.pt。\n'
     + '· 变差的话候选会留档作废，best.pt 一个字节都不动。\n'
     + '· 这是要占显卡的，期间可以继续标注，但别同时点「预标注 / 训练」。'

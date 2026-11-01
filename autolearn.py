@@ -96,6 +96,8 @@ DEFAULTS = {
     "stage": "idle",
     "last_run_at": None,
     "strategy": DEFAULT_STRATEGY,
+    # 上一代导出时的图片总数：用来判断「这一代数据是不是真的变多了」
+    "last_train_images": 0,
     "last_result": None,     # {gen, accepted, reason, old, new, at}
     "history": [],           # 最近若干代摘要
 }
@@ -166,6 +168,29 @@ def scan_edited(anno_dir=None):
 def pending(cfg, edited_total):
     """离下一次学习还差多少条（已攒的）。"""
     return max(0, int(edited_total) - int(cfg.get("learned_edited", 0)))
+
+
+def should_switch_to_retrain(prev_images, now_images):
+    """训练集明显变多时，这一代该改成基座重训而不是续训。
+
+    【判据为什么是「张数」而不是「修正条数」】
+    ft 那条路的 freeze=10 冻结了主干，它只会把检测头往当前数据上调一点点。
+    同一批图上把框挪准，这够用；但训练集里多了模型没见过的场景时，
+    冻结的主干根本学不进去——新图喂多少都是白喂。
+    所以只看「图片数有没有明显变多」：至少 5 张，且至少 3%。
+    只看 5 张是为了小库不至于「加 3 张就重训 5 分钟」；再看 3% 是防止
+    大库加 5 张也被判成「数据变了」。
+    3% 这个数按现在的库算：157 张时门槛是 5 张（一张新图都没白加），
+    1000 张时门槛是 30 张。
+    """
+    try:
+        prev_images = int(prev_images or 0)
+        now_images = int(now_images or 0)
+    except (TypeError, ValueError):
+        return False
+    if prev_images <= 0:
+        return False
+    return (now_images - prev_images) >= max(5, int(prev_images * 0.03))
 
 
 def should_learn(cfg, edited_total):
@@ -272,7 +297,7 @@ def _append_csv(row, path=None):
     path = path or HISTORY_CSV
     os.makedirs(os.path.dirname(path), exist_ok=True)
     new = not os.path.exists(path)
-    header = ["代数", "时间", "本次新增修正", "训练轮数",
+    header = ["代数", "时间", "本次新增修正", "训练轮数", "学法", "训练集张数",
               "旧检测mAP50", "新检测mAP50", "旧掩码mAP50", "新掩码mAP50",
               "结论", "原因"]
     try:
@@ -319,7 +344,8 @@ def run_round(edited_total=None, epochs=None):
 
     edited_total = scan_edited() if edited_total is None else int(edited_total)
     strategy = cfg.get("strategy", DEFAULT_STRATEGY)
-    if epochs is None:
+    auto_epochs = epochs is None
+    if auto_epochs:
         epochs = RETRAIN_EPOCHS if strategy == STRATEGY_RETRAIN else FT_EPOCHS
     gen = int(cfg.get("round", 0)) + 1
     started_edited = edited_total
@@ -344,8 +370,27 @@ def run_round(edited_total=None, epochs=None):
         ok, problems, _counts = validate_dataset(DATASET_DIR)
         if not ok:
             raise RuntimeError("数据集自检未通过：%s" % "；".join(problems[:3]))
-        _log("导出完成：训练 %d 张 / 验证 %d 张"
-             % (stats["train_images"], stats["val_images"]))
+        _log("导出完成：训练 %d 张 / 验证 %d 张（%s）"
+             % (stats["train_images"], stats["val_images"],
+                stats.get("val_split_source", "")))
+
+        # 【为什么这里要换学法】
+        # ft 是「从 best.pt 续训 + freeze=10 冻结主干」：只调检测头，
+        # 适合「同一批图上把框挪准一点」。可一旦训练集里出现了模型没见过的
+        # 场景，冻结的主干根本学不进去——看多少新图都是白看。
+        # 所以只要图片数明显变多（>=5 张且 >=5%），就改走基座重训：
+        # 慢一点，但新场景真能进模型。
+        prev_n = int(cfg.get("last_train_images") or 0)
+        if should_switch_to_retrain(prev_n, stats["total_images"]) \
+                and strategy != STRATEGY_RETRAIN:
+            strategy = STRATEGY_RETRAIN
+            if auto_epochs:
+                epochs = RETRAIN_EPOCHS
+            _log("训练集从 %d 张涨到 %d 张，自动改用基座重训"
+                 "（续训冻结主干，学不进新场景）"
+                 % (prev_n, stats["total_images"]))
+        cfg["last_train_images"] = stats["total_images"]
+        save_cfg(cfg)
 
         # --- 2. 续训出候选权重（不碰 best.pt） ---
         cfg["stage"] = "train"
@@ -436,6 +481,8 @@ def run_round(edited_total=None, epochs=None):
 
         _append_csv([
             gen, cfg["last_run_at"], added, epochs,
+            "基座重训" if strategy == STRATEGY_RETRAIN else "续训",
+            stats.get("total_images", ""),
             old_metrics.get("box_map50", ""), new_metrics.get("box_map50", ""),
             old_metrics.get("mask_map50", ""), new_metrics.get("mask_map50", ""),
             "采纳" if accepted else "不采纳", reason,

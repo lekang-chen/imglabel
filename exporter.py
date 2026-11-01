@@ -35,6 +35,8 @@ dataset/
 而不是等训练跑完才发现标签对不上、白白浪费时间。
 """
 
+import hashlib
+import json
 import os
 import random
 import shutil
@@ -49,8 +51,84 @@ from core import (
     semantic_from_objects,
 )
 
-# 训练/验证集划分比例
+# 训练/验证集划分比例（只用于「第一次初始化名单」）
 VAL_RATIO = 0.2
+
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+# 【为什么要固化成名单文件，而不是每次按比例随机分】
+# 原来是 random.seed(42) + random.sample(range(total), n_val)：
+# 种子固定，但采样的「索引范围」随总数变。150 张时抽 30 个索引，
+# 157 张时抽 31 个——同一个种子抽出的是两个几乎不相交的集合。
+# 后果是每加几张图，验证集就整体换一遍：同一份 best.pt 在 150 张的 val 上
+# 是 0.728/0.580，在 157 张的 val 上是 0.760/0.540。数字并非矛盾，
+# 是考卷换人了。
+#
+# 对自主学习来说这是致命的：每一代都要重新导出，验证集跟着漂移，
+# 闸门拿两个不同考卷的分数比大小，判据就彻底失效了。
+# 所以把验证集钉成一份名单：名单里的进 val，其余全进 train。
+# 新上传的图默认进训练集——这既保证了考卷不变，也正是「新信息」该去的地方。
+VAL_SPLIT_PATH = os.path.join(BASE_DIR, "data", "val_split.json")
+
+
+def find_duplicate_groups(image_names, image_dir):
+    """按文件内容找出内容完全相同的图（同一张照片传了两次）。
+
+    【为什么必须查】
+    同一张图如果一张进 train、一张进 val，模型训练时已经把它背下来了，
+    验证时自然"答对"——这叫数据泄漏，会让 mAP 虚高，而且是评委最爱问的点。
+    实测就踩到过：IMG_8073.webp 和 IMG_8073_2.webp 的 md5 完全一样，
+    一个在 val、一个在 train。
+
+    只在本地有原图时才查；查不到就当没重复（不阻断导出）。
+    """
+    seen = {}
+    groups = []
+    for name in image_names:
+        p = os.path.join(image_dir, name)
+        try:
+            with open(p, "rb") as f:
+                digest = hashlib.md5(f.read()).hexdigest()
+        except OSError:
+            continue
+        if digest in seen:
+            for g in groups:
+                if g[0] == digest:
+                    g[1].append(name)
+                    break
+            else:
+                groups.append([digest, [seen[digest], name]])
+        else:
+            seen[digest] = name
+    return groups
+
+
+def load_val_split(path=None):
+    """读固定验证集名单；文件不存在或坏了就返回空列表（= 还没初始化）。"""
+    path = path or VAL_SPLIT_PATH
+    try:
+        with open(path, encoding="utf-8") as f:
+            obj = json.load(f)
+        names = obj.get("names") if isinstance(obj, dict) else obj
+        return [str(n) for n in names] if isinstance(names, list) else []
+    except (OSError, ValueError, AttributeError):
+        return []
+
+
+def save_val_split(names, path=None):
+    """写回名单。先写临时文件再替换，中途打断不会留下半截 JSON。"""
+    path = path or VAL_SPLIT_PATH
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    obj = {
+        "note": "固定验证集名单：只增不减，新上传的图一律进训练集。"
+                "这样各代 mAP 才在同一张考卷上可比。",
+        "count": len(names),
+        "names": sorted(names),
+    }
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8", newline="\n") as f:
+        json.dump(obj, f, ensure_ascii=False, indent=2)
+        f.write("\n")
+    os.replace(tmp, path)
 
 
 def export_yolo_label(ann, has_seg=True):
@@ -97,7 +175,7 @@ def export_yolo_label(ann, has_seg=True):
 
 
 def export_dataset(annotations, out_dir, image_dir, val_ratio=VAL_RATIO,
-                   has_seg=True, copy_images=True, seed=42):
+                   has_seg=True, copy_images=True, seed=42, split_path=None):
     """
     主导出函数：把一批标注导出成完整的 YOLO 数据集。
 
@@ -106,17 +184,50 @@ def export_dataset(annotations, out_dir, image_dir, val_ratio=VAL_RATIO,
       out_dir     : 导出根目录（一般是 ./dataset）
       image_dir   : 原始图片所在目录
       copy_images : True = 复制图片到 dataset/images/；False = 不复制（只导标签）
-      seed        : 随机种子，保证 train/val 划分可复现
+      seed        : 只在「第一次初始化验证集名单」时用
+      split_path  : 验证集名单文件。默认 data/val_split.json。
+                    列表为空时按 val_ratio 初始化一次并落盘；之后一律以名单为准。
 
     返回一个 dict，记录本次导出的统计信息，用于「提交信息.txt」和对比页。
     """
     random.seed(seed)
 
-    # 1) 按文件名排序后固定划分，保证每次导出的 train/val 一致（可复现）
+    # 1) 划分：以固定名单为准，新图一律进训练集
     anns = sorted(annotations, key=lambda a: a.image_name)
     total = len(anns)
-    n_val = max(1, int(round(total * val_ratio))) if total > 1 else 0
-    val_set = set(random.sample(range(total), n_val)) if n_val else set()
+    split_path = split_path or VAL_SPLIT_PATH
+    fixed = load_val_split(split_path)
+    if fixed:
+        val_names = {a.image_name for a in anns if a.image_name in set(fixed)}
+        holdout_note = "沿用固定名单"
+    else:
+        # 首次：按比例随机抽一次，落盘后永久固定
+        n_val = max(1, int(round(total * val_ratio))) if total > 1 else 0
+        val_names = {anns[i].image_name for i in random.sample(range(total), n_val)} if n_val else set()
+        if val_names:
+            save_val_split(val_names, split_path)
+        holdout_note = "首次初始化并落盘"
+    # 1b) 数据泄漏检查：内容完全相同的图，不能一张进 train、一张进 val
+    #      （同一张照片传两次，模型训练时背下来了，验证时自然"答对"）
+    leak_fixed = []
+    for _digest, names in find_duplicate_groups([a.image_name for a in anns], image_dir):
+        # 用 any 而不是 names[0]：组内名字是按文件名排序的，
+        # 第一张可能正好在训练集（copy_of_xxx 排在 xxx 前面），
+        # 只看第一个会漏检一整组。
+        if any(n in val_names for n in names):
+            for n in names:
+                if n in val_names:
+                    val_names.discard(n)
+                    leak_fixed.append(n)
+    if leak_fixed:
+        # 名单也一起清掉，否则下次导出又要原地纠一遍
+        save_val_split(val_names, split_path)
+        if not val_names:
+            raise ValueError(
+                "验证集被清空了：名单里的图全都有内容完全相同的重复副本。"
+                "请删掉重复的图，或删除 %s 让系统重新划分。" % split_path)
+
+    val_set = {i for i, a in enumerate(anns) if a.image_name in val_names}
 
     # 2) 建目录
     for sub in ("images/train", "images/val",
@@ -132,6 +243,11 @@ def export_dataset(annotations, out_dir, image_dir, val_ratio=VAL_RATIO,
         "total_objects": 0,
         "class_counts": {c: 0 for c in CLASSES},
         "images_with_label": 0,
+        # 让人一眼看出这次导出有没有偷偷换考卷
+        "val_split_source": holdout_note,
+        "val_split_fixed": len(fixed),
+        # 被发现并强制挪进训练集的重复图（非空就说明库里有多份同一张照片）
+        "duplicates_moved": leak_fixed,
     }
 
     # 记录本次真正写出的文件，最后用来清理「上一次的残留」。
