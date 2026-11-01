@@ -124,3 +124,7 @@ data/train_meta.json
 # Cloudflare 隧道工具（52 MB 的单文件二进制，不进版本库）
 # 换机器时从 https://github.com/cloudflare/cloudflared/releases 下 windows-amd64
 tools/cloudflared.exe
+
+# 隧道每次启动生成的二维码图与当时地址（一次性，换机器/换网络就没意义）
+外网二维码.png
+data/tunnel_url.txt

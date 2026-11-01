@@ -165,8 +165,39 @@ def show_qr(url):
     return True
 
 
+def save_qr_png(url):
+    """终端里的半块字符在部分字体下会花，另存一张 PNG：
+    手机微信/相册都能直接长按识别，不用手输 40 位域名。"""
+    try:
+        import qrcode
+    except ImportError:
+        return None
+    path = os.path.join(BASE_DIR, "外网二维码.png")
+    try:
+        qr = qrcode.QRCode(border=4, box_size=10)
+        qr.add_data(url)
+        qr.make()
+        qr.make_image().save(path)
+        return path
+    except Exception:
+        return None
+
+
+def save_url(url):
+    """地址每次重启都变，写一份到 data/ 里，万一窗口被关掉还能找回刚才那个。"""
+    path = os.path.join(BASE_DIR, "data", "tunnel_url.txt")
+    try:
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(url + "\n")
+        return path
+    except OSError:
+        return None
+
+
 def banner(url, port):
     line = "=" * 62
+    png = save_qr_png(url)
+    txt = save_url(url)
     say()
     say(line)
     say("  外网地址（手机用流量 / 任何网络都能打开）")
@@ -183,6 +214,10 @@ def banner(url, port):
     say("  · 本机仍然用 http://127.0.0.1:%d" % port)
     say("  · 关掉这个窗口 = 链接立刻失效（地址下次会变）")
     say("  · 拿到地址的人能改标注、删图，别外传")
+    if png:
+        say("  · 二维码已另存：%s" % png)
+    if txt:
+        say("  · 地址已记录：%s" % txt)
     say(line)
     say()
 
