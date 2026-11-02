@@ -3,6 +3,5 @@
 3 potted plant
 4 cup
 5 couch
-6 book
-7 couch
-8 chair
+6 couch
+7 chair

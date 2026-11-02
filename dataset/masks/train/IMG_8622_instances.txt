@@ -1,0 +1,5 @@
+1 couch
+2 couch
+3 couch
+4 chair
+5 cup

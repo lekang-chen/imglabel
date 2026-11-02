@@ -3,3 +3,4 @@
 3 chair
 4 laptop
 5 laptop
+6 bed

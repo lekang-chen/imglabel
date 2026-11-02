@@ -2,12 +2,4 @@
 2 couch
 3 chair
 4 person
-5 book
-6 tv
-7 book
-8 book
-9 book
-10 book
-11 book
-12 book
-13 book
+5 tv

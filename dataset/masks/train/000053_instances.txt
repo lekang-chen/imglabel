@@ -9,9 +9,8 @@
 9 potted plant
 10 tv
 11 potted plant
-12 book
-13 potted plant
-14 cup
+12 potted plant
+13 cup
+14 bottle
 15 bottle
 16 bottle
-17 bottle

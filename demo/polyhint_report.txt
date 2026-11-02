@@ -1,7 +1,7 @@
 
 ===== 多边形工具可用性（视觉验证） =====
   PASS  截图成功生成
-  PASS  截图非空白页（左右栏+工具栏已渲染）  (636 KB)
+  PASS  截图非空白页（左右栏+工具栏已渲染）  (75 KB)
 
   注：canvas/polyhint_script.js 另含 15 项 DOM 断言，
       实测可跑通（RES=n15），但对无头 Edge 的 virtual-time预算敏感，

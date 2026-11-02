@@ -8,10 +8,4 @@
 8 chair
 9 potted plant
 10 bottle
-11 book
-12 book
-13 book
-14 book
-15 cup
-16 book
-17 book
+11 cup

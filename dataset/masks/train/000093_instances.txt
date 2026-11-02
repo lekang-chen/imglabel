@@ -1,10 +1,9 @@
 1 laptop
 2 tv
-3 book
+3 person
 4 person
-5 person
-6 chair
-7 person
-8 cup
-9 chair
-10 person
+5 chair
+6 person
+7 cup
+8 chair
+9 person

@@ -142,3 +142,8 @@ model/_cand/
 
 # 跑界面测试时 Edge 的临时 profile（12 MB，每次自动重建）
 demo/_probe/
+
+# 换类/大批量改标注前的临时备份（一次性，别进仓库）
+data/_anno_backup_*/
+data/classes_backup_*.json
+data/swap_metrics.json

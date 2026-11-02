@@ -1,15 +1,12 @@
 1 dining table
 2 cup
 3 cup
-4 person
+4 cup
 5 cup
 6 cup
-7 book
+7 cup
 8 cup
-9 book
-10 cup
+9 cup
+10 person
 11 cup
 12 cup
-13 person
-14 cup
-15 cup

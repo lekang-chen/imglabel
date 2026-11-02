@@ -76,13 +76,14 @@
       "threshold_raw": 0.33
     },
     "9": {
-      "name": "book",
-      "threshold": 0.31,
-      "precision": 0.641,
-      "recall": 0.547,
-      "f1": 0.59,
-      "threshold_raw": 0.28
+      "name": "bed",
+      "threshold": 0.15,
+      "precision": null,
+      "recall": null,
+      "f1": null,
+      "threshold_raw": 0.15,
+      "note": "冷启动初值：bed 只有 14 个训练样本，搜不出可信阈值，先压低保证能检出；样本攒够后重跑 tools/tune_threshold.py"
     }
   },
-  "note": "阈值在 150 张全量上搜索后，再向全局 0.40 收缩 25%（防小样本过拟合）；threshold_raw 为搜索原始值"
+  "note": "阈值在 150 张全量上搜索后，再向全局 0.40 收缩 25%（防小样本过拟合）；threshold_raw 为搜索原始值；bed 为 2026-11-02 换类时的手工冷启动初值（0.15），不是搜出来的"
 }

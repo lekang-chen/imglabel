@@ -1,0 +1,4 @@
+1 chair
+2 tv
+3 chair
+4 cup

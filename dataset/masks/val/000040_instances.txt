@@ -1,11 +1,8 @@
 1 tv
 2 laptop
 3 laptop
-4 book
-5 tv
-6 book
-7 book
+4 tv
+5 person
+6 bottle
+7 person
 8 person
-9 bottle
-10 person
-11 person

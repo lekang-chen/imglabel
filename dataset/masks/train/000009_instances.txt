@@ -3,10 +3,4 @@
 3 couch
 4 laptop
 5 bottle
-6 book
-7 book
-8 book
-9 book
-10 book
-11 cup
-12 book
+6 cup

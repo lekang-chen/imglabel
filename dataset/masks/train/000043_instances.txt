@@ -1,11 +1,6 @@
-1 dining table
-2 tv
-3 person
-4 laptop
-5 tv
-6 tv
-7 person
-8 tv
-9 cup
-10 cup
-11 cup
+1 tv
+2 person
+3 laptop
+4 person
+5 cup
+6 cup

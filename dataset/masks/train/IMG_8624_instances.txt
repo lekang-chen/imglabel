@@ -1,0 +1,8 @@
+1 chair
+2 tv
+3 person
+4 couch
+5 bottle
+6 bed
+7 bed
+8 bed

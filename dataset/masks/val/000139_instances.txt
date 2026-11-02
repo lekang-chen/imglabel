@@ -1,7 +1,3 @@
 1 couch
 2 dining table
-3 book
-4 potted plant
-5 book
-6 book
-7 book
+3 potted plant

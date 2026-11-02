@@ -288,7 +288,11 @@ python tools/make_compare_csv.py
 **可以在界面上改**：左栏「类别词表（可增删）」，能加、能改名、能换色、能删。
 词表存在 `data/classes.json`，删掉这个文件就回落到出厂十类：
 
-`person` `chair` `dining table` `couch` `tv` `laptop` `cup` `bottle` `potted plant` `book`
+`person` `chair` `dining table` `couch` `tv` `laptop` `cup` `bottle` `potted plant` `bed`
+
+> 2026-11-02：原来第十类是 `book`，因为实际场景里不需要标书、需要标床，
+> 已把 `book` 换成 `bed`（同类替换，检测头维度不变，其余九类权重原样保留）。
+> `book` 的 81 个标注连对象一起删掉了——那些框多数是误检的小物件，留着只是噪声。
 
 两条要知道的：
 

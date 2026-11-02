@@ -27,9 +27,14 @@ import tempfile
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from core import (CLASSES, IMAGE_EXTS, Annotation, Object,
+from core import (CLASSES, IMAGE_EXTS, Annotation, Object, get_classes,
                   instance_from_objects, point_in_polygon, polygon_area,
                   polygon_bbox, semantic_from_objects, simplify_polygon)
+
+# 测试造数据时要挑一个「当前词表里真的存在」的类别。不能写死 book——
+# 2026-11-02 词表把 book 换成了 bed，写死的测试当场就炸了。
+# 类别名本身对这几个用例没意义（只要求它是合法的第十类），所以动态取。
+CLS_LAST = get_classes()[-1]
 from PIL import Image
 
 from exporter import export_dataset, export_yolo_label, load_val_split, validate_dataset
@@ -238,7 +243,7 @@ def test_png_roundtrip():
 
     objs = [Object("person", [[0.1, 0.1], [0.5, 0.1], [0.5, 0.5], [0.1, 0.5]]),
             Object("cup", [[0.6, 0.6], [0.9, 0.6], [0.9, 0.9], [0.6, 0.9]]),
-            Object("book", [[0.2, 0.7], [0.4, 0.7], [0.4, 0.85], [0.2, 0.85]])]
+            Object(CLS_LAST, [[0.2, 0.7], [0.4, 0.7], [0.4, 0.85], [0.2, 0.85]])]
 
     # --- 语义图 ---
     sem = semantic_from_objects(objs, 100, 100)
@@ -259,7 +264,7 @@ def test_png_roundtrip():
     check("实例映射表条数 = 对象数", len(mapping) == 3, str(mapping))
     check("实例映射表类别正确",
           mapping[1][0] == "person" and mapping[2][0] == "cup"
-          and mapping[3][0] == "book", str(mapping))
+          and mapping[3][0] == CLS_LAST, str(mapping))
 
     # --- 实例数超过 uint8 上限必须报错，而不是静默溢出 ---
     many = [Object("cup", [[0.0, 0.0], [0.01, 0.0], [0.01, 0.01], [0.0, 0.01]])
@@ -272,11 +277,17 @@ def test_png_roundtrip():
 
 
 def test_classes():
-    print("\n[6] 十类词表")
+    print("\n[6] 出厂十类词表（data/classes.json 不存在时的兜底）")
+    # 注意：这里查的是 core.CLASSES —— 出厂默认值的快照，不是当前词表。
+    # 当前词表存在 data/classes.json 里，可能被用户改过（比如 book -> bed）。
+    # 这一项守的是「兜底值别被误改」，改了它，删掉配置文件后系统会回落成别的东西。
     expect = ["person", "chair", "dining table", "couch", "tv",
               "laptop", "cup", "bottle", "potted plant", "book"]
-    check("词表完全匹配任务书", CLASSES == expect, str(CLASSES))
+    check("出厂兜底词表未被改动", CLASSES == expect, str(CLASSES))
     check("共 10 类", len(CLASSES) == 10)
+    check("当前词表能读出来且不重名",
+          len(get_classes()) == 10 and len(set(get_classes())) == 10,
+          str(get_classes()))
 
 
 def test_simplify_closed_ring():
@@ -369,7 +380,7 @@ def test_export_clamps_out_of_range():
         # 故意构造越界多边形：模拟贴边物体的 -0.5 像素
         bad_poly = [[-0.0005, -0.0009], [0.5, -0.0026], [1.0005, 0.5],
                     [0.5, 1.0006], [-0.0023, 0.5]]
-        anns = [Annotation(n, 120, 90, objects=[Object("book", list(bad_poly))])
+        anns = [Annotation(n, 120, 90, objects=[Object(CLS_LAST, list(bad_poly))])
                 for n in ("edge.jpg", "edge2.jpg")]
         out_dir = os.path.join(tmp, "dataset")
         export_dataset(anns, out_dir, img_dir, val_ratio=0.5,

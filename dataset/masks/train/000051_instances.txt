@@ -1,3 +1,2 @@
-1 book
-2 couch
-3 person
+1 couch
+2 person

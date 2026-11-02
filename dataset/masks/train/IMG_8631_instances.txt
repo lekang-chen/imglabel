@@ -1,0 +1,7 @@
+1 dining table
+2 couch
+3 chair
+4 potted plant
+5 potted plant
+6 cup
+7 potted plant

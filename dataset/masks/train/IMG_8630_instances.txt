@@ -1,0 +1,10 @@
+1 couch
+2 dining table
+3 chair
+4 chair
+5 potted plant
+6 bottle
+7 bottle
+8 cup
+9 bottle
+10 potted plant

@@ -381,6 +381,12 @@ def main():
                         help="快速微调模式：小学习率、关掉 mosaic / copy_paste、"
                              "不做 warmup。从已经调好的权重再学时用这条路，"
                              "默认那套强增强会把好不容易学到的掩码打坏")
+    parser.add_argument("--unfreeze", action="store_true",
+                        help="配合 --ft：不冻结主干。换一个新类别（形态和旧类差很远）时用")
+    parser.add_argument("--allow-class-rename", action="store_true",
+                        help="允许「类别数不变、只是某个位置换了名字」时续训，"
+                             "例如把 book 换成 bed。检测头维度没变，其余类别原样保留，"
+                             "只有换掉的那个位置会重新学。不加这个开关仍然硬拦")
     args = parser.parse_args()
 
     print("=" * 64)
@@ -412,7 +418,10 @@ def main():
         cfg.setdefault("lr0", FT_LR)
         cfg.setdefault("lrf", 0.01)
         cfg["cos_lr"] = True
-        cfg["freeze"] = 10
+        # 冻结前 10 层（backbone）：换场景时防止把已有特征打散。
+        # 但「换一个新类别」不同——新类的形态可能和旧类差很远（book 小、bed 大），
+        # 冻着主干只能调检测头，容易学不进去，所以留了 --unfreeze 让人自己决定。
+        cfg["freeze"] = 0 if args.unfreeze else 10
         cfg["close_mosaic"] = 20
         cfg["copy_paste"] = 0.5
         cfg["scale"] = 0.7
@@ -441,21 +450,47 @@ def main():
     # 这种错不抛异常、只是指标悄悄崩，所以必须在这里硬拦。
     if args.ft:
         from core import get_classes
-        want = set(get_classes())
-        have = set((getattr(model, "names", {}) or {}).values())
-        if want != have:
-            only_new = sorted(want - have)
-            only_old = sorted(have - want)
-            sys.exit(
-                "[错误] 词表和权重对不上，不能续训。\n"
-                "        当前词表：%s\n"
-                "        权重里的类：%s\n"
-                "        词表多出来：%s\n"
-                "        权重多出来：%s\n"
-                "        类别一改，检测头就得重建，续训只会把学过的类冲掉。\n"
-                "        请改用基座重训（去掉 --ft，或界面上点「训练」）。"
-                % (", ".join(sorted(want)), ", ".join(sorted(have)),
-                   ", ".join(only_new) or "无", ", ".join(only_old) or "无"))
+        want = list(get_classes())
+        have_map = getattr(model, "names", {}) or {}
+        if isinstance(have_map, dict):
+            have = [have_map.get(i, "") for i in range(max(len(want), len(have_map)))]
+        else:
+            have = list(have_map)
+        if set(want) != set(have):
+            # 【同位置换名是唯一安全的例外】book -> bed 这种：类别数没变，
+            # 检测头张量形状完全一样，ultralytics 不会重建 head，前 9 个类的
+            # 权重原样保留，只有换掉的那个位置从旧类的参数起步重新学。
+            # 这比基座重训划算得多——重训要把其余九类从 COCO 重新学一遍。
+            #
+            # 但它必须由人显式声明：光看「长度相同」判断不了这是有意的换名，
+            # 还是词表顺序被误改（那种情况下位置会错位，第 3 个类学的东西
+            # 被当成第 5 个类，指标全线崩且不报错）。所以给开关，不给自动放行。
+            same_len = len(want) == len(have)
+            if args.allow_class_rename and same_len:
+                swaps = [(i, have[i], want[i]) for i in range(len(want))
+                         if have[i] != want[i]]
+                print("[警告] 类别数相同但名字不同，按「同位置换名」处理：")
+                for i, old, new in swaps:
+                    print("         位置 %d：%s -> %s（这个类会从旧权重起步重新学）" % (i, old, new))
+                print("         其余 %d 个类原样保留。" % (len(want) - len(swaps)))
+            else:
+                only_new = sorted(set(want) - set(have))
+                only_old = sorted(set(have) - set(want))
+                hint = ""
+                if same_len:
+                    hint = ("\n        类别数没变（都是 %d），如果这是「把某个类换成另一个类」"
+                            "（例如 book -> bed），\n        加 --allow-class-rename 可以续训，"
+                            "其余类别不会被冲掉。" % len(want))
+                sys.exit(
+                    "[错误] 词表和权重对不上，不能续训。\n"
+                    "        当前词表：%s\n"
+                    "        权重里的类：%s\n"
+                    "        词表多出来：%s\n"
+                    "        权重多出来：%s\n"
+                    "        类别数变了，检测头就得重建，续训只会把学过的类冲掉。%s\n"
+                    "        否则请改用基座重训（去掉 --ft，或界面上点「训练」）。"
+                    % (", ".join(sorted(want)), ", ".join(sorted(h for h in have if h)),
+                       ", ".join(only_new) or "无", ", ".join(only_old) or "无", hint))
 
     os.makedirs(MODEL_DIR, exist_ok=True)
     os.makedirs(RUNS_DIR, exist_ok=True)

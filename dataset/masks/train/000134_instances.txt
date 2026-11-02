@@ -2,4 +2,3 @@
 2 bottle
 3 potted plant
 4 potted plant
-5 book

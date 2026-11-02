@@ -3,5 +3,4 @@
 3 cup
 4 bottle
 5 bottle
-6 book
-7 bottle
+6 bottle

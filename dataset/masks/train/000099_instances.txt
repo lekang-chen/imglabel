@@ -3,5 +3,4 @@
 3 couch
 4 chair
 5 couch
-6 book
-7 cup
+6 cup
