@@ -1,0 +1,10 @@
+1 couch
+2 tv
+3 chair
+4 dining table
+5 couch
+6 chair
+7 chair
+8 chair
+9 chair
+10 chair

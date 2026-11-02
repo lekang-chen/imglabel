@@ -2,6 +2,6 @@
 2 chair
 3 chair
 4 tv
-5 tv
+5 laptop
 6 cup
 7 cup

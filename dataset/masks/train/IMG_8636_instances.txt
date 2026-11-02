@@ -1,0 +1,6 @@
+1 bed
+2 chair
+3 laptop
+4 potted plant
+5 person
+6 person

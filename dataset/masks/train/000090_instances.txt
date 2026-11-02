@@ -1,6 +1,5 @@
-1 couch
+1 bed
 2 person
 3 chair
 4 laptop
 5 laptop
-6 bed

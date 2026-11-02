@@ -5,7 +5,7 @@
  "objects": [
   {
    "id": "77ecc581",
-   "class": "couch",
+   "class": "bed",
    "polygon": [
     [
      0.0998849868774414,
@@ -25,7 +25,7 @@
     ]
    ],
    "source": "model",
-   "edited": false
+   "edited": true
   },
   {
    "id": "05cb771a",

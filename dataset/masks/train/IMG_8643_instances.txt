@@ -1,0 +1,8 @@
+1 bed
+2 couch
+3 tv
+4 couch
+5 potted plant
+6 cup
+7 cup
+8 cup

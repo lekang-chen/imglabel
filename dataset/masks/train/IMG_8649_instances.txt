@@ -1,0 +1,6 @@
+1 couch
+2 tv
+3 tv
+4 couch
+5 person
+6 person

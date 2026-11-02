@@ -1,0 +1,10 @@
+1 dining table
+2 chair
+3 couch
+4 chair
+5 dining table
+6 tv
+7 potted plant
+8 person
+9 chair
+10 cup

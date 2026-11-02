@@ -4,5 +4,3 @@
 4 couch
 5 bottle
 6 bed
-7 bed
-8 bed

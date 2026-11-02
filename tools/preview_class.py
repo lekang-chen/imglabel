@@ -30,11 +30,17 @@ ANNO_DIR = os.path.join(ROOT, "data", "annotations")
 CELL_W, CELL_H = 360, 270
 
 
-def collect(cls):
-    """返回 [(图片名, 该类的多边形列表, 其他类多边形列表)]。"""
+def collect(cls, only=None):
+    """返回 [(图片名, 该类的多边形列表, 其他类多边形列表)]。
+
+    only: 只保留文件名以这些前缀开头的图（'IMG_8636,IMG_8640'）。
+          新传一批图时用它单独看这批，避免被老样本稀释掉注意力。
+    """
     out = []
     for fn in sorted(os.listdir(ANNO_DIR)):
         if not fn.endswith(".json"):
+            continue
+        if only and not any(fn.startswith(p) for p in only):
             continue
         with io.open(os.path.join(ANNO_DIR, fn), encoding="utf-8") as f:
             data = json.load(f)
@@ -75,9 +81,15 @@ def main():
     ap.add_argument("--cls", required=True)
     ap.add_argument("--out", default=None)
     ap.add_argument("--cols", type=int, default=4)
+    ap.add_argument("--only", default=None,
+                    help="只画这些前缀开头的图，逗号分隔，如 IMG_8636,IMG_8637")
     args = ap.parse_args()
 
-    items = collect(args.cls)
+    only = None
+    if args.only:
+        only = [p.strip() for p in args.only.split(",") if p.strip()]
+
+    items = collect(args.cls, only)
     if not items:
         print("没有任何「%s」对象" % args.cls)
         return 1

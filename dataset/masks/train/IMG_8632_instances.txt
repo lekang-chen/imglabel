@@ -1,7 +1,5 @@
 1 dining table
 2 chair
 3 chair
-4 couch
-5 chair
-6 laptop
-7 potted plant
+4 chair
+5 potted plant
