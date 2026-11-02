@@ -1856,3 +1856,81 @@ md5 全一样，去重逻辑一上线就把它们全判成重复副本，验证�
 真实照片不会这样，但占位图会——测试数据也得像真数据。
 
 界面 112 项全绿。合计 303 项。
+
+---
+
+## 第二十三轮：Cloudflare 隧道 530——校园网封了 7844，加一条 SSH 备用通道
+
+### 现象
+
+要手机链接，重新跑了 `外网访问.bat`，地址正常打印：
+
+```
+https://hygiene-hardware-jeremy-infectious.trycloudflare.com
+```
+
+但 `curl` 这个地址返回 **530**，手机打开是一片 Cloudflare 错误页。
+换 `--protocol http2` 重起一条隧道，新地址同样 530。
+
+### 根因不是配置，是端口被封
+
+翻 cloudflared 日志：
+
+```
+INF precheck … UDP Connectivity region1.v2.argotunnel.com PASS
+INF precheck … TCP Connectivity region2.v2.argotunnel.com PASS
+ERR Unable to establish connection with Cloudflare edge
+    error="DialContext error: dial tcp 198.41.200.43:7844: i/o timeout"
+```
+
+**precheck 全 PASS，真连接全 timeout。** 两者走的不是同一条路径，
+只看 precheck 会得出「网络没问题」的错误结论。
+
+直接测四个边缘 IP 的 7844：
+
+| 目标 | 结果 |
+|---|---|
+| `198.41.200.43:7844` | TimeoutError 4.0s |
+| `198.41.192.167:7844` | TimeoutError 4.0s |
+| `198.41.192.7:7844` | TimeoutError 4.0s |
+| `198.41.200.13:7844` | TimeoutError 4.0s |
+
+全封。校园网出口对 7844 做了阻断，cloudflared 在这个网络下**无解**——
+换协议、换边缘 IP 都没用，它只走 7844。10 月 27 日能通，是换了网络环境。
+
+### 解法：换一条不依赖 7844 的通道
+
+SSH 反向隧道只用出站 **443**：远端服务器不回头连你，而是把请求顺着
+「你已经连出去的那条 TCP 连接」推回来。443 是被放行的（不然连 GitHub 都不行）。
+
+选 pinggy.io：不用注册、不用装东西、Windows 自带 `ssh` 就能跑。
+
+```
+ssh -p 443 -R0:localhost:5000 a.pinggy.io
+```
+
+实测 200，`/api/classes` 返回的就是原样 JSON，首页标题也对——隧道不改内容。
+
+顺带试了 localhost.run（`ssh -R 80:localhost:5000 nokey@localhost.run`）：
+SSH 能连上、地址也给了，但访问返回 **502 no tunnel**，转发没绑上。
+不留它，直接用 pinggy。
+
+### 落成脚本
+
+- `tools/tunnel_ssh.py`：起隧道 → 抓地址 → 打印 → 生成 `手机外网二维码.png`
+  → 写 `data/phone_url.txt`；复用已有服务，服务没跑会顺手起一个 `--lan`
+- `外网访问_备用.bat`：一键入口，和 `外网访问.bat` 并列
+- `使用说明.md` 新增「方式三-B」，顶部选择表加一行；README 同步
+- `.gitignore` 加二维码与临时地址、ssh known_hosts（都是一次性产物）
+
+### 要说清的代价
+
+pinggy 免费版**单条隧道 60 分钟**，到点自动断，重开换地址、二维码要重扫。
+所以它是「演示够用」，不是长期部署。真要长跑，还是得回到能连 7844 的网络，
+或者上 Cloudflare named tunnel / 自己的服务器。
+
+### 另一个副产物
+
+为了给手机用，服务从「只监听 127.0.0.1」改成 `--lan`（`0.0.0.0`），
+局域网地址 `http://172.24.190.99:5000` 本机实测 200。
+这样即使隧道断了，同一 Wi-Fi 下手机照样能用。

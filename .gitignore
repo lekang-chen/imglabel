@@ -127,7 +127,10 @@ tools/cloudflared.exe
 
 # 隧道每次启动生成的二维码图与当时地址（一次性，换机器/换网络就没意义）
 外网二维码.png
+手机外网二维码.png
 data/tunnel_url.txt
+data/phone_url.txt
+data/_ssh_known_hosts
 
 # 自主学习的运行时状态：开关/第几代/上次结果 + 锁 + 过程日志 + 本代评估明细
 # （records/自主学习记录.csv 不进这里——那是给人看的账，要跟着仓库走）
