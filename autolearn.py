@@ -47,7 +47,7 @@ import subprocess
 import sys
 import time
 
-from core import Annotation, pid_alive
+from core import Annotation, get_classes, pid_alive
 from exporter import export_dataset, validate_dataset
 from train import backup_existing_best
 
@@ -389,6 +389,19 @@ def run_round(edited_total=None, epochs=None):
             _log("训练集从 %d 张涨到 %d 张，自动改用基座重训"
                  "（续训冻结主干，学不进新场景）"
                  % (prev_n, stats["total_images"]))
+        # 【词表改了也必须重训】词表现在可以在界面上增删类别。一旦类别数变了，
+        # 续训就是拿一个尺寸对不上的检测头去喂数据：ultralytics 会按新 nc
+        # 重建 head 并随机初始化，等于把学过的类全冲掉。所以类别数不一致时
+        # 直接走基座重训，别用 ft。
+        prev_c = int(cfg.get("last_class_count") or 0)
+        now_c = len(get_classes())
+        if prev_c and now_c != prev_c and strategy != STRATEGY_RETRAIN:
+            strategy = STRATEGY_RETRAIN
+            if auto_epochs:
+                epochs = RETRAIN_EPOCHS
+            _log("词表从 %d 类变成 %d 类，自动改用基座重训"
+                 "（检测头维度变了，续训会把学过的类冲掉）" % (prev_c, now_c))
+        cfg["last_class_count"] = now_c
         cfg["last_train_images"] = stats["total_images"]
         save_cfg(cfg)
 

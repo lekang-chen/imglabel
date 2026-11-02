@@ -158,11 +158,19 @@ async function api(url, opts) {
 }
 
 // ---------------------------------------------------------------- 初始化
-async function init() {
+async function loadClasses() {
   const cls = await api('/api/classes');
   S.classes = cls.classes;
   S.colorMap = {};
   S.classes.forEach(c => { S.colorMap[c.name] = c.color; });
+  // 词表外但仍有对象在用的类别（改过词表留下的）。界面要提示，
+  // 否则这些对象导出时被跳过，人根本不知道数据少了。
+  S.unknownClasses = cls.unknown || [];
+  return cls;
+}
+
+async function init() {
+  await loadClasses();
 
   // 支持用 URL 参数直接进入指定模式和指定图片：
   //   ?mode=det&img=000003.jpg
@@ -189,6 +197,8 @@ async function init() {
   draw();
   // 页面打开时如果训练还在跑（比如中途刷新了），把进度条接上
   initTrainWatch();
+  // ?cls=1 直接弹出类别词表（截图/演示时省一次点击，和 ?mode= ?img= 一个路数）
+  if (params.get('cls') === '1') showClassManager();
 }
 
 async function loadImages() {
@@ -1115,6 +1125,7 @@ function bindEvents() {
   $('btnTrain').onclick = doTrain;
   $('btnCompare').onclick = showCompare;
   $('btnRecords').onclick = showRecords;
+  $('btnClasses').onclick = () => showClassManager();
 
   // 自主学习开关（默认关闭，开了才自己跑）
   $('autoLearn').onchange = e => toggleAuto(e.target.checked);
@@ -2102,6 +2113,187 @@ async function showRecords() {
       toast('已导出 ' + d.records + ' 条修正记录到 records/');
     } catch (e) { toast('导出失败', true); }
   };
+}
+
+// ---------------------------------------------------------------- 类别词表管理
+//
+// 【为什么要有这个界面】词表决定三件事：导出的类别编号、训练时的 nc、
+// 预标注的搜索范围。三处必须是同一份，所以增删改统一走后端写
+// data/classes.json，这里只负责展示和发起修改。
+//
+// 【为什么 bed 之前标不上】首轮预标注用的是 YOLO-World，开放词表检测器：
+// set_classes(词表) 就是它的全部先验，词表里没写的物体它当不存在。
+// 所以「漏标」不是模型不行，是词表里没这个词。反过来，自训的 best.pt
+// 只认识训练过的类，新增类别必须重训才会认——这两句都要写在界面上，
+// 否则用户会以为加了词就能自动认。
+
+function clsEscape(s) {
+  return String(s).replace(/[&<>"']/g, ch => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+  }[ch]));
+}
+
+function clsSend(url, method, body) {
+  return api(url, {
+    method,
+    headers: { 'Content-Type': 'application/json' },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+}
+
+/** 改完词表统一收尾：刷新调色板、重画当前图、用新数据重开弹窗。 */
+async function afterClassChange(d) {
+  await loadClasses();
+  if (S.anno) { renderObjects(); draw(); }
+  showClassManager(d);
+}
+
+async function showClassManager(prefetched) {
+  const d = prefetched || await api('/api/classes');
+
+  const unknownHtml = (d.unknown && d.unknown.length) ? `
+    <div class="cls-warn">
+      <b>这些类别不在词表里，但还有对象在用：</b>
+      ${d.unknown.map(u => `${clsEscape(u.name)}（${u.count} 个）`).join('、')}
+      <div class="muted small" style="margin-top:4px">
+        导出时它们会被跳过。要么把对象改到现有类别，要么把类别加回词表。
+      </div>
+    </div>` : '';
+
+  showModal('类别词表', `
+    <div class="cls-tip">
+      首轮预标注用的是<b>开放词表</b>检测器：词表里写什么词它就找什么，改完立刻生效。
+      自训模型（回标、自主学习）只认识训练过的类别，<b>新增类别要重新训练才会认</b>。
+    </div>
+    ${unknownHtml}
+    <table class="cmp cls-table">
+      <tr><th style="width:18px"></th><th>类别</th><th class="num">对象数</th><th></th></tr>
+      ${d.classes.map(c => `
+        <tr data-name="${clsEscape(c.name)}" data-color="${c.color}" data-count="${c.count}">
+          <td><span class="obj-swatch" style="background:${c.color}"></span></td>
+          <td class="cls-name">${clsEscape(c.name)}</td>
+          <td class="num">${c.count}</td>
+          <td class="cls-act">
+            <button class="btn btn-ghost btn-xs" data-act="rename">改名</button>
+            <button class="btn btn-ghost btn-xs" data-act="color">换色</button>
+            <button class="btn btn-ghost btn-xs" data-act="del">删除</button>
+          </td>
+        </tr>`).join('')}
+    </table>
+    <div class="cls-add">
+      <input id="clsNewName" class="cls-input" placeholder="新类别名，如 bed（英文识别更准）" maxlength="40">
+      <input id="clsNewColor" type="color" value="#94a3b8" class="cls-color" title="颜色">
+      <button class="btn btn-primary btn-xs" id="btnClsAdd">添加</button>
+    </div>
+    <div class="muted small" style="margin-top:8px">
+      删除还有对象在用的类别会先拦一下，让你把那批对象整体迁到别的类，避免数据静默丢失。
+    </div>
+    <div style="margin-top:14px">
+      <button class="btn btn-ghost" id="btnClsClose">关闭</button>
+    </div>
+  `);
+
+  $('btnClsClose').onclick = () => $('modal').classList.add('hidden');
+
+  $('btnClsAdd').onclick = async () => {
+    const name = ($('clsNewName').value || '').trim();
+    if (!name) { toast('先写个类别名', true); return; }
+    try {
+      const nd = await clsSend('/api/classes', 'POST',
+                               { name, color: $('clsNewColor').value });
+      toast('已添加 ' + name + '，预标注会开始找它');
+      afterClassChange(nd);
+    } catch (e) { toast(e.message, true); }
+  };
+  $('clsNewName').onkeydown = e => { if (e.key === 'Enter') $('btnClsAdd').click(); };
+
+  // 行内操作：委托给表格里的每一行，避免每次重渲染重新绑一堆全局 id
+  $('modalBody').querySelectorAll('.cls-table tr[data-name]').forEach(tr => {
+    const name = tr.dataset.name;
+
+    tr.querySelector('[data-act="rename"]').onclick = () => {
+      const cell = tr.querySelector('.cls-name');
+      cell.innerHTML = `<input class="cls-input cls-inline" value="${clsEscape(name)}" maxlength="40">`;
+      const input = cell.querySelector('input');
+      input.focus(); input.select();
+      const act = tr.querySelector('.cls-act');
+      act.innerHTML = `<button class="btn btn-primary btn-xs" data-act="saveName">保存</button>
+                       <button class="btn btn-ghost btn-xs" data-act="cancel">取消</button>`;
+      act.querySelector('[data-act="cancel"]').onclick = () => showClassManager();
+      act.querySelector('[data-act="saveName"]').onclick = async () => {
+        const v = (input.value || '').trim();
+        if (!v || v === name) { showClassManager(); return; }
+        try {
+          const nd = await clsSend('/api/classes/' + encodeURIComponent(name),
+                                   'PATCH', { name: v });
+          toast(`已改名 ${name} → ${v}（同步 ${nd.renamed_objects} 个对象）`);
+          afterClassChange(nd);
+        } catch (e) { toast(e.message, true); }
+      };
+      input.onkeydown = e => {
+        if (e.key === 'Enter') act.querySelector('[data-act="saveName"]').click();
+        if (e.key === 'Escape') showClassManager();
+      };
+    };
+
+    tr.querySelector('[data-act="color"]').onclick = () => {
+      // 用一个隐藏的取色器：原生 input[type=color] 在部分浏览器里
+      // 直接摆在表格里会撑坏布局，所以临时挂到 body 上、点完就删。
+      const picker = document.createElement('input');
+      picker.type = 'color';
+      picker.value = tr.dataset.color || '#94a3b8';
+      picker.style.cssText = 'position:fixed;left:0;bottom:0;width:1px;height:1px;opacity:0';
+      document.body.appendChild(picker);
+      picker.addEventListener('change', async () => {
+        try {
+          const nd = await clsSend('/api/classes/' + encodeURIComponent(name),
+                                   'PATCH', { color: picker.value });
+          afterClassChange(nd);
+        } catch (e) { toast(e.message, true); }
+        finally { picker.remove(); }
+      });
+      picker.click();
+    };
+
+    tr.querySelector('[data-act="del"]').onclick = async () => {
+      const count = +tr.dataset.count || 0;
+      if (!count) {
+        try {
+          const nd = await clsSend('/api/classes/' + encodeURIComponent(name), 'DELETE');
+          toast('已删除 ' + name);
+          afterClassChange(nd);
+        } catch (e) { toast(e.message, true); }
+        return;
+      }
+      // 还有对象在用：先让他选迁到哪，再删。这是唯一不丢数据的做法。
+      const candidates = d.classes.filter(c => c.name !== name);
+      if (!candidates.length) { toast('只剩这一个类别，删了就没得标了', true); return; }
+      const row = document.createElement('tr');
+      row.className = 'cls-reassign';
+      row.innerHTML = `<td colspan="4">
+          <div class="muted small" style="margin-bottom:6px">
+            「${clsEscape(name)}」还有 ${count} 个对象在用，删除后它们归到：
+          </div>
+          <select class="cls-input" id="clsReassignSel">
+            ${candidates.map(c => `<option value="${clsEscape(c.name)}">${clsEscape(c.name)}</option>`).join('')}
+          </select>
+          <button class="btn btn-primary btn-xs" id="btnClsReassign">迁过去并删除</button>
+          <button class="btn btn-ghost btn-xs" id="btnClsReassignCancel">取消</button>
+        </td>`;
+      tr.parentNode.insertBefore(row, tr.nextSibling);
+      $('btnClsReassignCancel').onclick = () => row.remove();
+      $('btnClsReassign').onclick = async () => {
+        const to = $('clsReassignSel').value;
+        try {
+          const nd = await clsSend(
+            '/api/classes/' + encodeURIComponent(name) + '?reassign=' + encodeURIComponent(to),
+            'DELETE');
+          toast(`已删除 ${name}，${nd.moved_objects} 个对象迁到 ${to}`);
+          afterClassChange(nd);
+        } catch (e) { toast(e.message, true); }
+      };
+    };
+  });
 }
 
 // ---------------------------------------------------------------- 弹层

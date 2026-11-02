@@ -409,14 +409,14 @@ def run_prelabel_job(job, image_dir=None, class_names=None,
 
     返回: {图片名: {"objects": [...], "source": "..."}}
     """
-    from core import CLASSES
+    from core import get_classes
 
     # 允许省略参数（JobManager 的默认执行路径就是只传 job）
     if image_dir is None:
         image_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                                  "data", "images")
     if class_names is None:
-        class_names = CLASSES
+        class_names = get_classes()
 
     seg_model = _load_seg_model()
     world_model = _load_world_model()
@@ -439,7 +439,7 @@ def run_prelabel_job(job, image_dir=None, class_names=None,
 
         try:
             objs = _prelabel_one(seg_model, world_model, img_path,
-                                 CLASSES, conf, iou_thresh)
+                                 class_names, conf, iou_thresh)
             results[img_name] = {
                 "objects": [o.to_dict() for o in objs],
                 "source": "model",
@@ -699,10 +699,13 @@ def run_relabel_job(job, image_dir, weights_path, conf=0.40, round_tag="R2",
     这样两轮的修正率才可比。详见 tools/eval_relabel_round.py。
     """
     from ultralytics import YOLO
-    from core import CLASSES, Object
+    from core import Object, get_classes
 
     model = YOLO(weights_path)
     seg_names = dict(model.names)
+    # 自训权重只认识训练时的那些类；用当前词表过滤，
+    # 权重里有、词表里没有的（改过词表）丢掉，不会污染标注。
+    class_names = get_classes()
 
     # 分类别阈值：换权重后置信度整体平移，逐类重标（见 tools/tune_threshold.py）。
     # predict 用全表最低阈值先放宽召回，再按各类门槛过滤。
@@ -729,7 +732,7 @@ def run_relabel_job(job, image_dir, weights_path, conf=0.40, round_tag="R2",
                     for i2, m in enumerate(r.masks.data):
                         cls_id = int(r.boxes.cls[i2])
                         cls_name = seg_names.get(cls_id, "")
-                        if cls_name not in CLASSES:
+                        if cls_name not in class_names:
                             continue
                         # 该类阈值没过：丢掉。阈值表缺这一类时用统一 conf。
                         if float(r.boxes.conf[i2]) < thr_map.get(cls_name, conf):

@@ -75,10 +75,28 @@ def pid_alive(pid):
 
 
 # ---------------------------------------------------------------------------
-# 十类词表（任务书明确规定"不得更改"）
-# 英文名是模型调用用名，顺序即 YOLO 训练时的类别编号 0~9
+# 类别词表：存在 data/classes.json，界面上可以增、删、改名、换色
+#
+# 【为什么从写死的常量改成文件】
+# 原来这里是十类常量，注释写着「任务书规定不得更改」。实际用起来第一个问题
+# 就是「bed 怎么没标上」——床根本不在词表里。预标注用的是 YOLO-World，
+# 开放词表检测器，它**只找你给它的词**，词表外的物体一律不输出。
+# 所以「漏标」很多时候不是模型不行，是词表里没这个词。
+#
+# 【为什么改名和调顺序是安全的】
+# 标注对象按**类别名**存，不按编号。改名只影响显示与导出映射（同步一遍已有
+# 对象即可）；调顺序只影响导出的类别编号，重训一次就一致了。
+#
+# 【为什么删除要拦一道】
+# 删掉一个还有对象在用的类别，那些对象导出时会被静默跳过——数据就这么没了，
+# 而且没人会发现。所以删除前先数一遍，还在用就要求先把它们改到别的类。
 # ---------------------------------------------------------------------------
-CLASSES = [
+DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
+CLASSES_PATH = os.path.join(DATA_DIR, "classes.json")
+
+# 出厂十类（任务书词表）。只在 data/classes.json 不存在或损坏时用来兜底，
+# 运行时判断「某个类别合不合法」一律走 get_classes()，不要用这个常量。
+DEFAULT_CLASSES = [
     "person",        # 人
     "chair",         # 椅子
     "dining table",  # 桌子
@@ -91,28 +109,146 @@ CLASSES = [
     "book",          # 书
 ]
 
-# 类别名 -> 编号（训练时用）
-CLASS_TO_ID = {name: i for i, name in enumerate(CLASSES)}
-
-# 界面上给每个类别分配的固定颜色（十六进制 RGB）
-# 同一类别在任何图、任何模式下都是同一个颜色，方便肉眼核对
-CLASS_COLORS = {
-    "person":       (59, 130, 246),   # 蓝
-    "chair":        (16, 185, 129),   # 绿
-    "dining table": (245, 158, 11),   # 橙
-    "couch":        (139, 92, 246),   # 紫
-    "tv":           (236, 72, 153),   # 粉
-    "laptop":       (14, 165, 233),   # 天蓝
-    "cup":          (234, 179, 8),    # 黄
-    "bottle":       (20, 184, 166),   # 青
-    "potted plant": (132, 204, 22),   # 黄绿
-    "book":         (217, 70, 239),   # 品红
+# 出厂配色（十六进制 RGB）。新增类别由界面选色，没选就用中性灰。
+DEFAULT_CLASS_COLORS = {
+    "person":       "#3b82f6",   # 蓝
+    "chair":        "#10b981",   # 绿
+    "dining table": "#f59e0b",   # 橙
+    "couch":        "#8b5cf6",   # 紫
+    "tv":           "#ec4899",   # 粉
+    "laptop":       "#0ea5e9",   # 天蓝
+    "cup":          "#eab308",   # 黄
+    "bottle":       "#14b8a6",   # 青
+    "potted plant": "#84cc16",   # 黄绿
+    "book":         "#d946ef",   # 品红
 }
 
+FALLBACK_CLASS_COLOR = "#94a3b8"   # 词表外/未知类别：中性灰
 
-def class_color(class_name):
-    """取类别颜色；遇到词表外的类别给个灰色兜底。"""
-    return CLASS_COLORS.get(class_name, (148, 163, 184))
+# 读盘缓存。键是文件 mtime——文件没变就不重复解析。
+# 【为什么要缓存】预标注每处理一张图都要问一次「这个类别在不在词表里」，
+# 150 张图就是 150 次读盘；训练导出时还要按类别统计。没必要反复解析 JSON。
+_CLASS_CACHE = {"stamp": None, "items": None, "path": None}
+
+
+def _default_class_items():
+    return [{"name": n, "color": DEFAULT_CLASS_COLORS[n]} for n in DEFAULT_CLASSES]
+
+
+def _clean_class_items(raw):
+    """把任意形状的输入整理成 [{"name","color"}]，顺手去重、丢掉空名。"""
+    if isinstance(raw, dict):
+        raw = raw.get("classes", [])
+    if not isinstance(raw, list):
+        raise TypeError("classes 必须是数组")
+    items, seen = [], set()
+    for entry in raw:
+        if isinstance(entry, str):
+            name, color = entry, FALLBACK_CLASS_COLOR
+        elif isinstance(entry, dict):
+            name = str(entry.get("name", "")).strip()
+            color = str(entry.get("color") or FALLBACK_CLASS_COLOR).strip()
+        else:
+            continue
+        if not name or name in seen:
+            continue
+        if not color.startswith("#") or len(color) not in (4, 7):
+            color = FALLBACK_CLASS_COLOR
+        seen.add(name)
+        items.append({"name": name, "color": color})
+    return items
+
+
+def load_class_items(path=None):
+    """读当前词表，返回 [{"name": 类别名, "color": "#rrggbb"}]。
+
+    文件不存在（还没改过词表）或内容坏了，都回落到出厂十类——
+    词表读不出来不能让整个系统起不来，界面上还能改回去。
+    """
+    path = path or CLASSES_PATH
+    try:
+        stamp = os.path.getmtime(path)
+    except OSError:
+        return _default_class_items()
+
+    cache = _CLASS_CACHE
+    if cache["stamp"] == stamp and cache["path"] == path and cache["items"]:
+        return [dict(it) for it in cache["items"]]
+
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            items = _clean_class_items(json.load(f))
+        if not items:
+            return _default_class_items()
+    except (OSError, ValueError, TypeError):
+        return _default_class_items()
+
+    cache.update({"stamp": stamp, "path": path,
+                  "items": [dict(it) for it in items]})
+    return [dict(it) for it in items]
+
+
+def save_class_items(items, path=None):
+    """写回词表（原子替换），并让缓存立刻失效。返回写入的规整结果。"""
+    path = path or CLASSES_PATH
+    clean = _clean_class_items(items)
+    if not clean:
+        raise ValueError("词表不能为空，至少要留一个类别")
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump({"classes": clean}, f, ensure_ascii=False, indent=2)
+        f.write("\n")
+    os.replace(tmp, path)
+    _CLASS_CACHE.update({"stamp": None, "items": None, "path": None})
+    return clean
+
+
+def get_classes(path=None):
+    """当前词表的类别名列表（顺序即导出/训练时的类别编号）。"""
+    return [it["name"] for it in load_class_items(path)]
+
+
+def get_class_colors(path=None):
+    """当前词表的 {类别名: (r, g, b)}。"""
+    out = {}
+    for it in load_class_items(path):
+        out[it["name"]] = hex_to_rgb(it["color"])
+    return out
+
+
+def class_id_of(name, path=None):
+    """类别名 -> 编号；不在词表里返回 -1（调用方自己决定是跳过还是报错）。"""
+    try:
+        return get_classes(path).index(name)
+    except ValueError:
+        return -1
+
+
+def hex_to_rgb(value):
+    """'#3b82f6' -> (59, 130, 246)；认不出来就给兜底灰。"""
+    s = str(value or "").strip().lstrip("#")
+    if len(s) == 3:
+        s = "".join(ch * 2 for ch in s)
+    if len(s) != 6:
+        s = FALLBACK_CLASS_COLOR.lstrip("#")
+    try:
+        return tuple(int(s[i:i + 2], 16) for i in (0, 2, 4))
+    except ValueError:
+        return hex_to_rgb(FALLBACK_CLASS_COLOR)
+
+
+def class_color(class_name, path=None):
+    """取类别颜色；词表外的类别给中性灰（不会报错，画图要用）。"""
+    return get_class_colors(path).get(class_name, hex_to_rgb(FALLBACK_CLASS_COLOR))
+
+
+# 兼容旧代码：这两个常量等价于「出厂十类」，只用于工具脚本与默认值。
+# 运行时判断合法性请用 class_id_of() / get_classes()，否则改过词表后会对不上。
+CLASSES = list(DEFAULT_CLASSES)
+CLASS_TO_ID = {name: i for i, name in enumerate(DEFAULT_CLASSES)}
+CLASS_COLORS = {k: hex_to_rgb(v) for k, v in DEFAULT_CLASS_COLORS.items()}
+
 
 
 # ---------------------------------------------------------------------------
@@ -302,18 +438,25 @@ class Object:
 
     字段说明：
       id        : 唯一短 id，界面上用来标识选中项
-      class_name: 类别名（必须是 CLASSES 里的十类之一）
+      class_name: 类别名（必须是当前词表 data/classes.json 里的一个）
       polygon   : 归一化多边形点集 [[x,y], ...]  ← 唯一的几何真值
       source    : 'model' 表示模型预标注生成的，'human' 表示人工新建的
       edited    : True 表示这个对象被人改过（改类别/改形状/移动过）
                   修正率统计就靠这个字段
     """
 
-    def __init__(self, class_name, polygon, source="model", edited=False, obj_id=None):
-        if class_name not in CLASS_TO_ID:
+    def __init__(self, class_name, polygon, source="model", edited=False,
+                 obj_id=None, strict=True):
+        # 【strict 为什么要留一个 False】
+        # 人在界面上新建对象必须严格——类别一定来自当前词表。
+        # 但读旧标注文件不能严格：词表被改过（比如删了 bed）之后，
+        # 历史上标过 bed 的图再打开就会抛异常，整张图都读不出来。
+        # 所以 from_dict 走 strict=False：先原样读进来，界面上把它标成
+        # 「词表外类别」提醒处理，导出时跳过并计数——数据不会因为改词表就丢。
+        if strict and class_id_of(class_name) < 0:
             raise ValueError(
-                "类别 '%s' 不在任务书规定的十类词表内。可选：%s"
-                % (class_name, ", ".join(CLASSES))
+                "类别 '%s' 不在当前词表内。可选：%s"
+                % (class_name, ", ".join(get_classes()))
             )
         self.id = obj_id or uuid.uuid4().hex[:8]
         self.class_name = class_name
@@ -338,6 +481,7 @@ class Object:
             source=d.get("source", "model"),
             edited=d.get("edited", False),
             obj_id=d.get("id"),
+            strict=False,     # 旧文件里可能是已从词表移除的类别，先读进来
         )
 
     def bbox(self):
@@ -456,7 +600,11 @@ def semantic_from_objects(objects, width, height):
     for obj in objects:
         if len(obj.polygon) < 3:
             continue
-        cls_id = CLASS_TO_ID[obj.class_name]
+        # 词表外的类别（改过词表留下的历史对象）不画进语义图：
+        # 给它编号只会污染导出的 mask，跳过并让 exporter 去记账。
+        cls_id = class_id_of(obj.class_name)
+        if cls_id < 0:
+            continue
         pts = np.array(
             [[int(round(p[0] * (width - 1))), int(round(p[1] * (height - 1)))]
              for p in obj.polygon],

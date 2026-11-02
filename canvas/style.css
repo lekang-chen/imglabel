@@ -691,3 +691,42 @@ table.cmp tr:last-child td { border-bottom: none; }
 @media (hover: none) {
   .img-del { opacity: 1; }
 }
+
+/* ---------------- 类别词表弹窗 ----------------
+   词表是「会改变数据口径」的操作，所以这里的提示条用蓝色（说明）
+   和琥珀色（警告）区分：蓝色是「这样改会怎样」，琥珀色是「这样改会丢东西」。 */
+.cls-tip {
+  background: var(--accent-soft); border: 1px solid #c7dbff; color: #1e3a8a;
+  border-radius: var(--radius); padding: 8px 10px; font-size: 12px;
+  line-height: 1.55; margin-bottom: 10px;
+}
+.cls-warn {
+  background: #fffbeb; border: 1px solid #fde68a; color: #92400e;
+  border-radius: var(--radius); padding: 8px 10px; font-size: 12px;
+  line-height: 1.55; margin-bottom: 10px;
+}
+table.cls-table { margin-top: 2px; }
+table.cls-table td { padding: 5px 6px; vertical-align: middle; }
+table.cls-table tr.cls-reassign td { background: var(--panel-2); }
+.cls-table .cls-act { text-align: right; white-space: nowrap; }
+.cls-name { font-family: var(--mono); }
+.cls-input {
+  border: 1px solid var(--line-2); border-radius: 6px; padding: 4px 7px;
+  font-size: 12px; color: var(--text); background: #fff; min-width: 0;
+  font-family: var(--mono);
+}
+.cls-input:focus { outline: none; border-color: var(--accent); }
+.cls-inline { width: 120px; }
+.cls-color {
+  width: 26px; height: 26px; padding: 0; border: 1px solid var(--line-2);
+  border-radius: 6px; background: #fff; cursor: pointer; flex: 0 0 26px;
+}
+.cls-add { display: flex; gap: 6px; align-items: center; margin-top: 12px; }
+.cls-add .cls-input { flex: 1; }
+/* 词表里的色块要看得见：默认 .obj-swatch 只有 9px，在表格里太小，
+   用户看不出「这个类别是什么颜色」，换色功能就失去参照 */
+table.cls-table .obj-swatch {
+  width: 13px; height: 13px; border-radius: 3px; flex: 0 0 13px; display: inline-block;
+}
+table.cls-table th.num, table.cls-table td.num { text-align: right; }
+table.cls-table th:first-child, table.cls-table td:first-child { width: 26px; }

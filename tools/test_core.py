@@ -775,6 +775,109 @@ def test_val_split_is_frozen():
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+def test_class_vocab():
+    """词表可增删改——「bed 标不上」就是词表里没这个词。
+
+    这一组守住四件事：
+      1. 没文件 / 文件坏了都不能让系统起不来（回落出厂十类）
+      2. 词表外的历史对象读得出来（改词表不该把已有数据锁死）
+      3. 导出 yaml 的 nc 跟着词表走（否则训练 nc 与标签编号对不上）
+      4. 严格模式只用于人新建，宽松模式用于读旧文件
+    """
+    print("\n[15] 词表可增删改")
+    import shutil
+
+    import core
+    from core import (DEFAULT_CLASSES, class_id_of, get_classes, hex_to_rgb,
+                      load_class_items, save_class_items)
+
+    tmp = tempfile.mkdtemp(prefix="imglabel_cls_")
+    old_path = core.CLASSES_PATH
+    try:
+        path = os.path.join(tmp, "classes.json")
+        core.CLASSES_PATH = path
+        core._CLASS_CACHE.update({"stamp": None, "items": None, "path": None})
+
+        check("没有 classes.json 时用出厂十类", get_classes() == DEFAULT_CLASSES,
+              str(len(get_classes())))
+
+        # 加一类：bed
+        items = [{"name": n, "color": "#3b82f6"} for n in DEFAULT_CLASSES]
+        items.append({"name": "bed", "color": "#ef4444"})
+        save_class_items(items)
+        names = get_classes()
+        check("新增后变成 11 类", len(names) == 11, str(len(names)))
+        check("bed 进了词表", "bed" in names)
+        check("bed 排在最后（编号 10）", class_id_of("bed") == 10,
+              str(class_id_of("bed")))
+        check("颜色能取出来",
+              hex_to_rgb(load_class_items()[-1]["color"]) == (239, 68, 68))
+
+        # 严格模式：人新建对象只认词表内的类
+        try:
+            Object("bed", [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0]])
+            check("严格模式接受词表内类别", True)
+        except ValueError as e:
+            check("严格模式接受词表内类别", False, str(e))
+        try:
+            Object("spaceship", [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0]])
+            check("严格模式拒绝词表外类别", False, "没抛异常")
+        except ValueError:
+            check("严格模式拒绝词表外类别", True)
+
+        # 宽松模式：读旧标注不能因为改过词表就失败
+        old_obj = Object.from_dict({"class": "spaceship",
+                                    "polygon": [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0]]})
+        check("旧图里词表外的类别仍能读出来", old_obj.class_name == "spaceship")
+
+        # 导出：nc 必须等于词表长度
+        img_dir = os.path.join(tmp, "images")
+        os.makedirs(img_dir, exist_ok=True)
+        from PIL import Image
+        for i in range(4):
+            Image.new("RGB", (120, 90), (200 - i, 175, 150 + i)).save(
+                os.path.join(img_dir, "c%d.jpg" % i))
+        anns = [
+            Annotation("c%d.jpg" % i, 120, 90, objects=[
+                Object("person", [[0.1, 0.1], [0.5, 0.1], [0.5, 0.6], [0.1, 0.6]]),
+                Object("bed", [[0.55, 0.2], [0.9, 0.2], [0.9, 0.7], [0.55, 0.7]]),
+            ]) for i in range(4)
+        ]
+        out_dir = os.path.join(tmp, "dataset")
+        export_dataset(anns, out_dir, img_dir, val_ratio=0.25,
+                       split_path=os.path.join(tmp, "val_split.json"))
+        with open(os.path.join(out_dir, "data.yaml"), encoding="utf-8") as f:
+            yaml_txt = f.read()
+        check("data.yaml 的 nc 跟着词表（11）", "nc: 11" in yaml_txt, yaml_txt[:60])
+        check("yaml 的 names 里有 bed", "bed" in yaml_txt)
+        # bed 是编号 10，标签第一列必须是 10（不是 0/1 那种越界值）
+        lbl_dir = os.path.join(out_dir, "labels", "train")
+        first = os.path.join(lbl_dir, sorted(os.listdir(lbl_dir))[0])
+        with open(first, encoding="utf-8") as f:
+            ids = {ln.split()[0] for ln in f if ln.strip()}
+        check("bed 写成编号 10", "10" in ids, str(sorted(ids)))
+
+        # 文件坏掉不能炸
+        with open(path, "w", encoding="utf-8") as f:
+            f.write("{ 这不是 json")
+        core._CLASS_CACHE.update({"stamp": None, "items": None, "path": None})
+        check("文件损坏时回落出厂十类", get_classes() == DEFAULT_CLASSES)
+
+        # 空词表要拒绝（删到最后一个类别时别把系统搞成零类）
+        try:
+            save_class_items([])
+            check("保存空词表被拒绝", False, "没抛异常")
+        except ValueError:
+            check("保存空词表被拒绝", True)
+
+        check("3 位色缩写能展开", hex_to_rgb("#abc") == (0xaa, 0xbb, 0xcc))
+        check("认不出的颜色给兜底灰", hex_to_rgb("not-a-color") == (148, 163, 184))
+    finally:
+        core.CLASSES_PATH = old_path
+        core._CLASS_CACHE.update({"stamp": None, "items": None, "path": None})
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 if __name__ == "__main__":
     print("=" * 60)
     print("核心逻辑自测")
@@ -794,6 +897,7 @@ if __name__ == "__main__":
     test_train_backup_keep_baseline()
     test_autolearn()
     test_val_split_is_frozen()
+    test_class_vocab()
     print("\n" + "=" * 60)
     print("结果: %d 通过, %d 失败" % (PASS, FAIL))
     print("=" * 60)

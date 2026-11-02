@@ -35,8 +35,9 @@ import webbrowser
 from flask import (Flask, jsonify, request, send_file,
                    send_from_directory, abort)
 
-from core import (CLASSES, IMAGE_EXTS, Annotation, Object, class_color,
-                  pid_alive, point_in_polygon)
+from core import (IMAGE_EXTS, Annotation, Object, class_color, class_id_of,
+                  get_classes, load_class_items, pid_alive, point_in_polygon,
+                  save_class_items)
 from exporter import export_dataset, validate_dataset, format_report
 from prelabel import JobManager, run_prelabel_job, run_relabel_job
 from train_progress import human_duration, parse_train_log
@@ -459,15 +460,228 @@ def index():
     return send_from_directory(app.static_folder, "index.html")
 
 
+# --- 类别词表：可增删改 ------------------------------------------------
+#
+# 【为什么这几个接口要放在后端做，而不是前端改完存 localStorage】
+# 词表决定三件事：导出的标签编号、训练的 nc、预标注 vocab。
+# 三处必须同一份，所以只能有一个真值文件 data/classes.json，
+# 前端只负责展示和发起修改。
+
+# 新增类别没指定颜色时，按这个顺序取，避免一堆一样的灰点
+_CLASS_PALETTE = [
+    "#ef4444", "#f97316", "#eab308", "#84cc16", "#22c55e", "#14b8a6",
+    "#06b6d4", "#3b82f6", "#6366f1", "#8b5cf6", "#d946ef", "#ec4899",
+]
+
+
+def _class_usage():
+    """全库每个类别各有多少个标注对象在用。
+
+    【为什么不用 Annotation 类去读】这里要的是极轻的计数：只读 json 的
+    objects[].class，不做几何构造、不校验多边形。删类别前要立刻拿到数字
+    给用户看，走一遍完整反序列化没必要。
+    """
+    usage = {}
+    try:
+        files = os.listdir(ANNO_DIR)
+    except OSError:
+        return usage
+    for fn in files:
+        if not fn.endswith(".json"):
+            continue
+        try:
+            with open(os.path.join(ANNO_DIR, fn), "r", encoding="utf-8") as f:
+                data = json.load(f)
+        except (OSError, ValueError):
+            continue
+        for o in data.get("objects") or []:
+            c = o.get("class")
+            if c:
+                usage[c] = usage.get(c, 0) + 1
+    return usage
+
+
+def _rename_class_in_annotations(old, new):
+    """把所有标注对象里的 old 类别改名成 new，返回改动对象数。
+
+    直接改 json 而不走 Annotation 反序列化：这条路径只动 class 字段，
+    多边形、edited 标记原样保留，也不该因为改名就把对象算成「人工修正」。
+    """
+    changed = 0
+    try:
+        files = os.listdir(ANNO_DIR)
+    except OSError:
+        return 0
+    for fn in files:
+        if not fn.endswith(".json"):
+            continue
+        p = os.path.join(ANNO_DIR, fn)
+        try:
+            with open(p, "r", encoding="utf-8") as f:
+                data = json.load(f)
+        except (OSError, ValueError):
+            continue
+        hit = 0
+        for o in data.get("objects") or []:
+            if o.get("class") == old:
+                o["class"] = new
+                hit += 1
+        if hit:
+            tmp = p + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump(data, f, ensure_ascii=False)
+            os.replace(tmp, p)
+            changed += hit
+    return changed
+
+
+def _classes_payload():
+    """词表 + 每类使用量 + 词表外残留。前端一次拿全，避免两次请求。"""
+    usage = _class_usage()
+    items = load_class_items()
+    known = {it["name"] for it in items}
+    return {
+        "classes": [
+            {"name": it["name"], "id": i, "color": it["color"],
+             "count": usage.get(it["name"], 0)}
+            for i, it in enumerate(items)
+        ],
+        # 词表外但仍有对象在用的类别（改过词表留下的历史数据）。
+        # 界面上要提示「这些对象导出时会被跳过」，否则数据静默丢失。
+        "unknown": [{"name": k, "count": v}
+                    for k, v in sorted(usage.items()) if k not in known],
+        "needs_retrain": True,
+    }
+
+
 @app.route("/api/classes")
 def api_classes():
-    """十类词表 + 每类颜色，前端渲染用。"""
-    return jsonify({
-        "classes": [
-            {"name": c, "id": i, "color": "#%02x%02x%02x" % class_color(c)}
-            for i, c in enumerate(CLASSES)
-        ]
-    })
+    """当前词表 + 每类颜色与使用量。"""
+    return jsonify(_classes_payload())
+
+
+@app.route("/api/classes", methods=["POST"])
+def api_classes_add():
+    """新增一个类别。"""
+    body = request.get_json(silent=True) or {}
+    name = str(body.get("name", "")).strip()
+    color = str(body.get("color") or "").strip()
+
+    if not name:
+        return jsonify({"error": "类别名不能为空"}), 400
+    if len(name) > 40:
+        return jsonify({"error": "类别名太长（最多 40 字符）"}), 400
+    if any(ch in name for ch in "\r\n\t"):
+        return jsonify({"error": "类别名不能含换行或制表符"}), 400
+    if class_id_of(name) >= 0:
+        return jsonify({"error": "类别「%s」已经存在" % name}), 409
+
+    items = load_class_items()
+    if len(items) >= 60:
+        return jsonify({"error": "类别太多（上限 60 个），先删几个不用的"}), 400
+    if not color:
+        color = _CLASS_PALETTE[len(items) % len(_CLASS_PALETTE)]
+
+    items.append({"name": name, "color": color})
+    save_class_items(items)
+
+    state = load_state()
+    log_action(state, "新增类别", name)
+    save_state(state)
+    payload = _classes_payload()
+    payload["ok"] = True
+    return jsonify(payload)
+
+
+@app.route("/api/classes/<path:name>", methods=["PATCH"])
+def api_classes_update(name):
+    """改名或换色。改名会同步改掉所有标注对象里的类别。"""
+    body = request.get_json(silent=True) or {}
+    new_name = str(body.get("name", "") or "").strip()
+    new_color = str(body.get("color", "") or "").strip()
+
+    items = load_class_items()
+    idx = next((i for i, it in enumerate(items) if it["name"] == name), -1)
+    if idx < 0:
+        return jsonify({"error": "词表里没有「%s」" % name}), 404
+
+    if new_color:
+        if not (new_color.startswith("#") and len(new_color) in (4, 7)):
+            return jsonify({"error": "颜色要写成 #rrggbb"}), 400
+        items[idx]["color"] = new_color
+
+    moved = 0
+    if new_name and new_name != name:
+        if len(new_name) > 40:
+            return jsonify({"error": "类别名太长（最多 40 字符）"}), 400
+        if any(ch in new_name for ch in "\r\n\t"):
+            return jsonify({"error": "类别名不能含换行或制表符"}), 400
+        if class_id_of(new_name) >= 0:
+            return jsonify({"error": "类别「%s」已经存在" % new_name}), 409
+        items[idx]["name"] = new_name
+        moved = _rename_class_in_annotations(name, new_name)
+
+    save_class_items(items)
+
+    state = load_state()
+    if new_name and new_name != name:
+        log_action(state, "类别改名", "%s -> %s（同步 %d 个对象）"
+                   % (name, new_name, moved))
+    if new_color:
+        log_action(state, "类别换色", "%s -> %s" % (name, new_color))
+    save_state(state)
+
+    payload = _classes_payload()
+    payload["ok"] = True
+    payload["renamed_objects"] = moved
+    return jsonify(payload)
+
+
+@app.route("/api/classes/<path:name>", methods=["DELETE"])
+def api_classes_delete(name):
+    """删除一个类别。
+
+    还有对象在用时拒绝删除（返回 409 和数量），除非同时给出 reassign，
+    把那批对象整体改到另一个类别上——这是「删词」时唯一不丢数据的做法。
+    """
+    reassign = str(request.args.get("reassign", "") or "").strip()
+
+    items = load_class_items()
+    if not any(it["name"] == name for it in items):
+        return jsonify({"error": "词表里没有「%s」" % name}), 404
+    if len(items) <= 1:
+        return jsonify({"error": "至少得留一个类别"}), 400
+
+    usage = _class_usage().get(name, 0)
+    if usage and not reassign:
+        return jsonify({
+            "error": "还有 %d 个对象用着「%s」。先把它们改到别的类别，"
+                     "或者选一个类别让它们整体迁过去。" % (usage, name),
+            "in_use": usage,
+            "candidates": [it["name"] for it in items if it["name"] != name],
+            "need_reassign": True,
+        }), 409
+
+    moved = 0
+    if usage and reassign:
+        if reassign == name:
+            return jsonify({"error": "不能迁到正在删除的类别"}), 400
+        if class_id_of(reassign) < 0:
+            return jsonify({"error": "目标类别「%s」不在词表里" % reassign}), 400
+        moved = _rename_class_in_annotations(name, reassign)
+
+    items = [it for it in items if it["name"] != name]
+    save_class_items(items)
+
+    state = load_state()
+    log_action(state, "删除类别",
+               "%s（%d 个对象迁到 %s）" % (name, moved, reassign or "-"))
+    save_state(state)
+
+    payload = _classes_payload()
+    payload["ok"] = True
+    payload["moved_objects"] = moved
+    return jsonify(payload)
 
 
 @app.route("/api/images")
@@ -544,10 +758,13 @@ def api_save_annotation(image_name):
     if ann.image_name != image_name:
         ann.image_name = image_name
 
-    # 类别校验
-    for o in ann.objects:
-        if o.class_name not in CLASSES:
-            return jsonify({"error": "非法类别: %s" % o.class_name}), 400
+    # 类别校验：词表外的类别不拦，只报给前端。
+    # 【为什么放行而不是 400】词表是可改的。改完词表再打开旧图，图上那些
+    # 已经不在词表里的对象如果一保存就报错，用户连「把它们删掉」这个动作
+    # 都做不成，等于数据被锁死。放行 + 返回清单，让界面提示「导出会跳过」，
+    # 用户自己决定是改类还是把类别加回词表。
+    unknown = sorted({o.class_name for o in ann.objects
+                      if class_id_of(o.class_name) < 0})
 
     save_anno(ann)
 
@@ -561,6 +778,7 @@ def api_save_annotation(image_name):
         "image": ann.image_name,
         "objects": len(ann.objects),
         "edited": ann.edited_count(),
+        "unknown_classes": unknown,
     })
 
 
@@ -632,7 +850,7 @@ def api_prelabel_start():
                             round_tag="R%d" % (state.get("round", 1) + 1),
                             only=only)
         else:
-            run_prelabel_job(job, IMAGE_DIR, CLASSES, only=only)
+            run_prelabel_job(job, IMAGE_DIR, get_classes(), only=only)
 
         # 预标注结果写回标注文件（作为草稿）
         for name, res in job.results.items():

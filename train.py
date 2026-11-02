@@ -54,11 +54,10 @@ BACKUP_KEEP = 3                                    # 只留最近 3 份（每份
 #   · cos_lr + close_mosaic=20 + patience=40：长训练要余弦退火，最后 20 轮关掉 mosaic
 FT_LR = 8e-4
 
-# 十类词表（与 core.py 保持一致）
-CLASSES = [
-    "person", "chair", "dining table", "couch", "tv",
-    "laptop", "cup", "bottle", "potted plant", "book",
-]
+# 类别词表不再写在这里：改由 core.get_classes() 读 data/classes.json。
+# 【为什么删掉这份副本】抄一份常量最省事，但词表一改（界面能改了）就会
+# 训练用的 nc 和导出的标签编号对不上——这种错不报异常，只是指标莫名其妙地掉。
+# 需要类别名的地方一律从 core 取。
 
 
 def refuse_if_not_exported():
@@ -130,7 +129,12 @@ def _write_train_yaml():
         with open(DATA_YAML, encoding="utf-8") as f:
             lines = f.read().splitlines()
     except OSError:
-        lines = ["nc: 10", "names:", "  0: person"]
+        # dataset/data.yaml 不存在时用当前词表兜底（正常情况下走不到这里，
+        # refuse_if_not_exported 已经先拦了）
+        from core import get_classes
+        names = get_classes()
+        lines = ["nc: %d" % len(names), "names:"]
+        lines += ["  %d: %s" % (i, c) for i, c in enumerate(names)]
 
     new_path = DATASET_DIR.replace("\\", "/")
     out, replaced = [], False
@@ -430,6 +434,28 @@ def main():
     base = args.weights or pick_base_weights()
     print("[3/4] 从预训练权重开始微调: %s" % base)
     model = YOLO(base)
+
+    # 【词表改了就不能续训】类别词表现在可以在界面上增删。一旦类别数变了，
+    # 权重的检测头维度和新的 nc 对不上：ultralytics 会按新 nc 重建 head
+    # 并随机初始化，--ft 那几十轮等于从头学分类头，原来会的类一起被冲掉。
+    # 这种错不抛异常、只是指标悄悄崩，所以必须在这里硬拦。
+    if args.ft:
+        from core import get_classes
+        want = set(get_classes())
+        have = set((getattr(model, "names", {}) or {}).values())
+        if want != have:
+            only_new = sorted(want - have)
+            only_old = sorted(have - want)
+            sys.exit(
+                "[错误] 词表和权重对不上，不能续训。\n"
+                "        当前词表：%s\n"
+                "        权重里的类：%s\n"
+                "        词表多出来：%s\n"
+                "        权重多出来：%s\n"
+                "        类别一改，检测头就得重建，续训只会把学过的类冲掉。\n"
+                "        请改用基座重训（去掉 --ft，或界面上点「训练」）。"
+                % (", ".join(sorted(want)), ", ".join(sorted(have)),
+                   ", ".join(only_new) or "无", ", ".join(only_old) or "无"))
 
     os.makedirs(MODEL_DIR, exist_ok=True)
     os.makedirs(RUNS_DIR, exist_ok=True)

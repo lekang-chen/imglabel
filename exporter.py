@@ -44,9 +44,9 @@ import shutil
 from PIL import Image
 
 from core import (
-    CLASSES,
-    CLASS_TO_ID,
     Annotation,
+    class_id_of,
+    get_classes,
     instance_from_objects,
     semantic_from_objects,
 )
@@ -146,7 +146,11 @@ def export_yolo_label(ann, has_seg=True):
     for obj in ann.objects:
         if len(obj.polygon) < 3:
             continue
-        cls_id = CLASS_TO_ID[obj.class_name]
+        # 词表外的类别（改词表留下的历史对象）不写进标签文件：
+        # 硬塞一个编号进去，训练时会被当成别的类，比丢掉更糟。
+        cls_id = class_id_of(obj.class_name)
+        if cls_id < 0:
+            continue
 
         if has_seg:
             flat = []
@@ -191,6 +195,10 @@ def export_dataset(annotations, out_dir, image_dir, val_ratio=VAL_RATIO,
     返回一个 dict，记录本次导出的统计信息，用于「提交信息.txt」和对比页。
     """
     random.seed(seed)
+
+    # 本次导出用的词表。导出期间可能有人在界面上改词表，取一次快照，
+    # 保证 yaml、标签编号、统计三处口径一致。
+    classes = get_classes()
 
     # 1) 划分：以固定名单为准，新图一律进训练集
     anns = sorted(annotations, key=lambda a: a.image_name)
@@ -241,7 +249,7 @@ def export_dataset(annotations, out_dir, image_dir, val_ratio=VAL_RATIO,
         "train_images": 0,
         "val_images": 0,
         "total_objects": 0,
-        "class_counts": {c: 0 for c in CLASSES},
+        "class_counts": {c: 0 for c in classes},
         "images_with_label": 0,
         # 让人一眼看出这次导出有没有偷偷换考卷
         "val_split_source": holdout_note,
@@ -315,9 +323,9 @@ def export_dataset(annotations, out_dir, image_dir, val_ratio=VAL_RATIO,
         f.write("path: .\n")
         f.write("train: images/train\n")
         f.write("val: images/val\n")
-        f.write("nc: %d\n" % len(CLASSES))
+        f.write("nc: %d\n" % len(classes))
         f.write("names:\n")
-        for i, c in enumerate(CLASSES):
+        for i, c in enumerate(classes):
             f.write("  %d: %s\n" % (i, c))
 
     # 4) 处理上一次导出留下的残留文件
@@ -365,12 +373,14 @@ def validate_dataset(out_dir):
     校验项（对应任务书"文档导出前的格式校验"）：
       1. 三种格式的对象数量是否一致
       2. YOLO 标签里的坐标是否都在 [0,1]
-      3. 类别编号是否在 0~9 范围
+      3. 类别编号是否在当前词表范围内
       4. 多边形顶点是否 >= 3
-      5. 语义 PNG 的像素值是否只有 0~9 和 255
+      5. 语义 PNG 的像素值是否只有「词表内的编号」和 255
       6. train/val 是否有图
     """
     problems = []
+    # 词表可能在导出之后被改过，这里重新取一次当前值，编号范围才说得通
+    classes = get_classes()
     counts = {"label_objects": 0, "mask_instances": 0, "semantic_classes": set()}
 
     for split in ("train", "val"):
@@ -401,7 +411,7 @@ def validate_dataset(out_dir):
                     coords = [float(x) for x in parts[1:]]
                     counts["label_objects"] += 1
 
-                    if not (0 <= cls_id < len(CLASSES)):
+                    if not (0 <= cls_id < len(classes)):
                         problems.append("%s/%s.txt 第%d行: 类别编号 %d 越界"
                                         % (split, stem, lineno, cls_id))
                     if len(coords) < 6 or len(coords) % 2 != 0:
@@ -439,7 +449,7 @@ def validate_dataset(out_dir):
                 s = Image.open(sem_path)
                 svals = set(s.getdata())
                 for v in svals:
-                    if v != 255 and v not in range(len(CLASSES)):
+                    if v != 255 and v not in range(len(classes)):
                         problems.append("%s/%s 语义 PNG 出现非法像素值 %d"
                                         % (split, stem, v))
                     elif v != 255:

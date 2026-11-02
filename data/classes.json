@@ -1,0 +1,44 @@
+{
+  "classes": [
+    {
+      "name": "person",
+      "color": "#3b82f6"
+    },
+    {
+      "name": "chair",
+      "color": "#10b981"
+    },
+    {
+      "name": "dining table",
+      "color": "#f59e0b"
+    },
+    {
+      "name": "couch",
+      "color": "#8b5cf6"
+    },
+    {
+      "name": "tv",
+      "color": "#ec4899"
+    },
+    {
+      "name": "laptop",
+      "color": "#0ea5e9"
+    },
+    {
+      "name": "cup",
+      "color": "#eab308"
+    },
+    {
+      "name": "bottle",
+      "color": "#14b8a6"
+    },
+    {
+      "name": "potted plant",
+      "color": "#84cc16"
+    },
+    {
+      "name": "book",
+      "color": "#d946ef"
+    }
+  ]
+}
