@@ -730,3 +730,21 @@ table.cls-table .obj-swatch {
 }
 table.cls-table th.num, table.cls-table td.num { text-align: right; }
 table.cls-table th:first-child, table.cls-table td:first-child { width: 26px; }
+
+/* 删除类别时的两条出路要摆在一起、看得清差别：
+   「迁过去」是保数据，「一起删」是丢数据，后者用红按钮 + 说明文字区分。 */
+.cls-del-opt {
+  display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+  margin-top: 6px;
+}
+.cls-del-label {
+  font-size: 12px; color: var(--text-2); flex: 0 0 34px;
+}
+.cls-del-opt .muted.small { flex: 1 1 160px; min-width: 0; }
+table.cls-table tr.cls-reassign td { padding: 8px 8px 10px; }
+/* .btn-danger 原本是侧栏里「整行宽」的删除按钮（width:100%），
+   放进这一行会被撑成整行，这里按行内按钮改回来 */
+.cls-del-opt .btn-danger {
+  width: auto; height: 24px; margin-top: 0; padding: 0 9px;
+  font-size: 11px; border-radius: var(--radius-sm); flex: 0 0 auto;
+}

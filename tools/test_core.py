@@ -19,6 +19,7 @@ tools/test_core.py —— 核心逻辑自测
   5. 边界情况：空标注、多边形点太少、非法类别要报错
 """
 
+import json
 import os
 import shutil
 import sys
@@ -878,6 +879,129 @@ def test_class_vocab():
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+def test_class_delete_options():
+    """删类别有两条出路：迁到别的类，或者连对象一起删。
+
+    真实现象：词表里 book 有 81 个对象在用，想删掉时只给「迁到 person」。
+    可这批 book 本来就是标错的——迁过去等于把 81 个错框换个标签留在训练集，
+    下一轮训练会把误检学得更牢。所以必须有一条「连同对象一起删」的路。
+
+    同时守住两条不能破的：
+      1. 不带参数直接删仍然 409（误点一下就把数据删光的入口不能有）
+      2. reassign 和 purge 同时给是矛盾请求，直接 400，不做隐式取舍
+    """
+    print("\n[16] 删除类别：迁到别的类 vs 连对象一起删")
+    import app as web
+    import core
+
+    tmp = tempfile.mkdtemp(prefix="clsdel_")
+    anno_dir = os.path.join(tmp, "annotations")
+    os.makedirs(anno_dir)
+    cls_path = os.path.join(tmp, "classes.json")
+    state_path = os.path.join(tmp, "state.json")
+
+    old_anno, old_cls, old_state = web.ANNO_DIR, core.CLASSES_PATH, web.STATE_FILE
+    web.ANNO_DIR = anno_dir
+    core.CLASSES_PATH = cls_path
+    web.STATE_FILE = state_path
+    core._CLASS_CACHE.update({"stamp": None, "items": None, "path": None})
+
+    def reset():
+        """重建词表与两张标注，让每个用例从同一个起点开始。"""
+        core.save_class_items(
+            [{"name": n, "color": "#3b82f6"} for n in ("person", "book", "cup")],
+            cls_path)
+        for fn in os.listdir(anno_dir):
+            os.remove(os.path.join(anno_dir, fn))
+        data = {
+            "a.json": [{"class": "book"}, {"class": "person"}],
+            "b.json": [{"class": "book"}, {"class": "book"}, {"class": "cup"}],
+        }
+        for fn, objs in data.items():
+            for i, o in enumerate(objs):
+                o.update({"id": "%s%d" % (fn[0], i),
+                          "polygon": [[0, 0], [10, 0], [10, 10]],
+                          "source": "model", "edited": False})
+            with open(os.path.join(anno_dir, fn), "w", encoding="utf-8") as f:
+                json.dump({"image": fn, "width": 100, "height": 100,
+                           "objects": objs}, f)
+
+    def classes_now():
+        with open(cls_path, encoding="utf-8") as f:
+            return [c["name"] for c in json.load(f)["classes"]]
+
+    def objs_now():
+        out = []
+        for fn in sorted(os.listdir(anno_dir)):
+            with open(os.path.join(anno_dir, fn), encoding="utf-8") as f:
+                out += [o["class"] for o in json.load(f)["objects"]]
+        return sorted(out)
+
+    try:
+        client = web.app.test_client()
+
+        # 1) 不带参数：必须 409，且把两条出路都告诉前端
+        reset()
+        r = client.delete("/api/classes/book")
+        d = r.get_json() or {}
+        check("不带参数删在用的类别 -> 409", r.status_code == 409,
+              "%d %s" % (r.status_code, d.get("error", "")))
+        check("409 里带对象数与候选类别",
+              d.get("in_use") == 3 and "person" in (d.get("candidates") or []),
+              "in_use=%s candidates=%s" % (d.get("in_use"), d.get("candidates")))
+        check("409 时数据一个没动", objs_now().count("book") == 3, str(objs_now()))
+
+        # 2) 矛盾参数
+        reset()
+        r = client.delete("/api/classes/book?reassign=person&purge=1")
+        check("reassign 与 purge 同时给 -> 400", r.status_code == 400,
+              "%d" % r.status_code)
+
+        # 3) 迁移：对象还在，只是换了名字
+        reset()
+        r = client.delete("/api/classes/book?reassign=cup")
+        d = r.get_json() or {}
+        check("迁移方式删掉词表项", "book" not in classes_now(), str(classes_now()))
+        check("迁移方式报出移动数", d.get("moved_objects") == 3,
+              str(d.get("moved_objects")))
+        check("迁移后对象总数不变，book 全变 cup",
+              objs_now() == ["cup", "cup", "cup", "cup", "person"], str(objs_now()))
+        check("迁移不产生误删", d.get("purged_objects") == 0,
+              str(d.get("purged_objects")))
+
+        # 4) 连对象一起删：book 的框从所有图里消失，别的类完好
+        reset()
+        r = client.delete("/api/classes/book?purge=1")
+        d = r.get_json() or {}
+        check("purge 返回 200", r.status_code == 200, "%d" % r.status_code)
+        check("purge 报出删除数", d.get("purged_objects") == 3,
+              str(d.get("purged_objects")))
+        check("purge 后 book 对象全部消失",
+              objs_now() == ["cup", "person"], str(objs_now()))
+        check("purge 后词表里没有 book", "book" not in classes_now(),
+              str(classes_now()))
+        check("purge 不会误动别的类别", "person" in classes_now(), str(classes_now()))
+
+        # 5) 删不存在的类别
+        reset()
+        r = client.delete("/api/classes/nope?purge=1")
+        check("删不存在的类别 -> 404", r.status_code == 404, "%d" % r.status_code)
+
+        # 6) 空类别的 purge 不该写出空文件
+        reset()
+        r = client.delete("/api/classes/person?purge=1")
+        d = r.get_json() or {}
+        check("purge 报出的删除数与该类实际对象数一致",
+              r.status_code == 200 and d.get("purged_objects") == 1,
+              "%d purged=%s" % (r.status_code, d.get("purged_objects")))
+        check("此时 person 的 1 个对象也没了（这类本来就要删）",
+              objs_now() == ["book", "book", "book", "cup"], str(objs_now()))
+    finally:
+        web.ANNO_DIR, core.CLASSES_PATH, web.STATE_FILE = old_anno, old_cls, old_state
+        core._CLASS_CACHE.update({"stamp": None, "items": None, "path": None})
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 if __name__ == "__main__":
     print("=" * 60)
     print("核心逻辑自测")
@@ -898,6 +1022,7 @@ if __name__ == "__main__":
     test_autolearn()
     test_val_split_is_frozen()
     test_class_vocab()
+    test_class_delete_options()
     print("\n" + "=" * 60)
     print("结果: %d 通过, %d 失败" % (PASS, FAIL))
     print("=" * 60)

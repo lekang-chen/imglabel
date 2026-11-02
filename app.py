@@ -535,6 +535,50 @@ def _rename_class_in_annotations(old, new):
     return changed
 
 
+def _purge_class_from_annotations(name):
+    """把某类别的对象从所有标注里删掉，返回删掉的对象数。
+
+    【为什么要有这条路】「迁到别的类」是保守做法，但用户经常是标错了：
+    压根不该有这个类，那 81 个 book 框本来就是错的，迁到 person 上只是
+    把错误数据换个标签留在训练集里。所以要给一条「连同对象一起删」的路。
+
+    【为什么不能只删词表项】词表只是名字列表，真正的数据在 data/annotations。
+    只删词表，那些对象会变成「词表外残留」——界面上报警、导出时被跳过，
+    等于把垃圾扫到地毯下面。要么迁走，要么真删，不能留着。
+
+    直接改 json 不走 Annotation 反序列化，理由同 _rename_class_in_annotations：
+    这条路径只动 objects 数组，其他字段原样保留，也不该把人删对象算成
+    「人工修正」（那会推高自主学习的待学计数，等于用删数据骗训练）。
+    """
+    if not name:
+        return 0
+    removed = 0
+    try:
+        files = os.listdir(ANNO_DIR)
+    except OSError:
+        return 0
+    for fn in files:
+        if not fn.endswith(".json"):
+            continue
+        p = os.path.join(ANNO_DIR, fn)
+        try:
+            with open(p, "r", encoding="utf-8") as f:
+                data = json.load(f)
+        except (OSError, ValueError):
+            continue
+        objs = data.get("objects") or []
+        kept = [o for o in objs if o.get("class") != name]
+        hit = len(objs) - len(kept)
+        if hit:
+            data["objects"] = kept
+            tmp = p + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump(data, f, ensure_ascii=False)
+            os.replace(tmp, p)
+            removed += hit
+    return removed
+
+
 def _classes_payload():
     """词表 + 每类使用量 + 词表外残留。前端一次拿全，避免两次请求。"""
     usage = _class_usage()
@@ -641,46 +685,61 @@ def api_classes_update(name):
 def api_classes_delete(name):
     """删除一个类别。
 
-    还有对象在用时拒绝删除（返回 409 和数量），除非同时给出 reassign，
-    把那批对象整体改到另一个类别上——这是「删词」时唯一不丢数据的做法。
+    还有对象在用时默认拒绝（409 + 数量），给两条出路：
+      ?reassign=另一类  —— 那批对象整体改到另一个类别上（不丢数据）
+      ?purge=1          —— 连同那批对象一起删掉（数据本身就不要了）
+
+    第二条是为「这一类标错了」准备的：book 根本不该出现在这批图里，那 81 个
+    框迁到 person 只是把错数据换个名字继续喂训练集，误检会跟着教下去。
     """
     reassign = str(request.args.get("reassign", "") or "").strip()
+    purge = str(request.args.get("purge", "") or "").strip().lower() in ("1", "true", "yes")
 
     items = load_class_items()
     if not any(it["name"] == name for it in items):
         return jsonify({"error": "词表里没有「%s」" % name}), 404
     if len(items) <= 1:
         return jsonify({"error": "至少得留一个类别"}), 400
+    if reassign and purge:
+        return jsonify({"error": "reassign 和 purge 只能选一个"}), 400
 
     usage = _class_usage().get(name, 0)
-    if usage and not reassign:
+    if usage and not reassign and not purge:
         return jsonify({
-            "error": "还有 %d 个对象用着「%s」。先把它们改到别的类别，"
-                     "或者选一个类别让它们整体迁过去。" % (usage, name),
+            "error": "还有 %d 个对象用着「%s」。可以整体迁到别的类别，"
+                     "或者连同这些对象一起删掉。" % (usage, name),
             "in_use": usage,
             "candidates": [it["name"] for it in items if it["name"] != name],
             "need_reassign": True,
         }), 409
 
     moved = 0
+    purged = 0
     if usage and reassign:
         if reassign == name:
             return jsonify({"error": "不能迁到正在删除的类别"}), 400
         if class_id_of(reassign) < 0:
             return jsonify({"error": "目标类别「%s」不在词表里" % reassign}), 400
         moved = _rename_class_in_annotations(name, reassign)
+    elif usage and purge:
+        purged = _purge_class_from_annotations(name)
 
     items = [it for it in items if it["name"] != name]
     save_class_items(items)
 
     state = load_state()
-    log_action(state, "删除类别",
-               "%s（%d 个对象迁到 %s）" % (name, moved, reassign or "-"))
+    if purged:
+        log_action(state, "删除类别",
+                   "%s（连同 %d 个对象一起删除）" % (name, purged))
+    else:
+        log_action(state, "删除类别",
+                   "%s（%d 个对象迁到 %s）" % (name, moved, reassign or "-"))
     save_state(state)
 
     payload = _classes_payload()
     payload["ok"] = True
     payload["moved_objects"] = moved
+    payload["purged_objects"] = purged
     return jsonify(payload)
 
 

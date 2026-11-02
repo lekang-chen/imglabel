@@ -2144,6 +2144,24 @@ function clsSend(url, method, body) {
 /** 改完词表统一收尾：刷新调色板、重画当前图、用新数据重开弹窗。 */
 async function afterClassChange(d) {
   await loadClasses();
+  // 改名和「连对象一起删」都直接改了磁盘上的标注文件，内存里那份已经是旧的：
+  // 不重读的话，画布上还画着刚删掉的框，一点保存又被写回磁盘。
+  // 有未保存改动时不重读（那会丢用户的编辑），只按新词表重画。
+  if (S.current && !S.dirty) {
+    try {
+      const a = await api('/api/annotation/' + encodeURIComponent(S.current));
+      S.anno = a;
+      S.origById = {};
+      a.objects.forEach(o => { S.origById[o.id] = JSON.stringify(o); });
+      S.selectedId = null;
+      S.edits = [];
+      renderObjects(); renderProps(); renderEditLog(); renderImageList(); draw();
+      showClassManager(d);
+      return;
+    } catch (e) {
+      // 读不到就退回「只重画」，不影响词表本身的改动
+    }
+  }
   if (S.anno) { renderObjects(); draw(); }
   showClassManager(d);
 }
@@ -2265,20 +2283,34 @@ async function showClassManager(prefetched) {
         } catch (e) { toast(e.message, true); }
         return;
       }
-      // 还有对象在用：先让他选迁到哪，再删。这是唯一不丢数据的做法。
+      // 还有对象在用，给两条路：
+      //   1) 迁到别的类 —— 数据还要，只是名字不对
+      //   2) 连对象一起删 —— 这一类压根标错了，留着会教坏模型
+      // 默认给迁移，但第二个按钮做得显眼，因为「book 我不需要」这种诉求
+      // 很常见，硬逼着迁到 person 等于把错框换个标签继续喂训练集。
       const candidates = d.classes.filter(c => c.name !== name);
       if (!candidates.length) { toast('只剩这一个类别，删了就没得标了', true); return; }
       const row = document.createElement('tr');
       row.className = 'cls-reassign';
       row.innerHTML = `<td colspan="4">
           <div class="muted small" style="margin-bottom:6px">
-            「${clsEscape(name)}」还有 ${count} 个对象在用，删除后它们归到：
+            「${clsEscape(name)}」还有 ${count} 个对象在用：
           </div>
-          <select class="cls-input" id="clsReassignSel">
-            ${candidates.map(c => `<option value="${clsEscape(c.name)}">${clsEscape(c.name)}</option>`).join('')}
-          </select>
-          <button class="btn btn-primary btn-xs" id="btnClsReassign">迁过去并删除</button>
-          <button class="btn btn-ghost btn-xs" id="btnClsReassignCancel">取消</button>
+          <div class="cls-del-opt">
+            <span class="cls-del-label">改到</span>
+            <select class="cls-input" id="clsReassignSel">
+              ${candidates.map(c => `<option value="${clsEscape(c.name)}">${clsEscape(c.name)}</option>`).join('')}
+            </select>
+            <button class="btn btn-primary btn-xs" id="btnClsReassign">迁过去并删除</button>
+          </div>
+          <div class="cls-del-opt">
+            <span class="cls-del-label">或者</span>
+            <button class="btn btn-danger btn-xs" id="btnClsPurge">连同 ${count} 个对象一起删掉</button>
+            <span class="muted small">这些标注本身就不要了，直接从所有图里删掉</span>
+          </div>
+          <div style="margin-top:8px">
+            <button class="btn btn-ghost btn-xs" id="btnClsReassignCancel">取消</button>
+          </div>
         </td>`;
       tr.parentNode.insertBefore(row, tr.nextSibling);
       $('btnClsReassignCancel').onclick = () => row.remove();
@@ -2289,6 +2321,17 @@ async function showClassManager(prefetched) {
             '/api/classes/' + encodeURIComponent(name) + '?reassign=' + encodeURIComponent(to),
             'DELETE');
           toast(`已删除 ${name}，${nd.moved_objects} 个对象迁到 ${to}`);
+          afterClassChange(nd);
+        } catch (e) { toast(e.message, true); }
+      };
+      $('btnClsPurge').onclick = async () => {
+        if (!confirm(`确定要把「${name}」连同 ${count} 个对象一起删掉？\n\n`
+                   + `这 ${count} 个框会从所有图片里消失，不能撤销。\n`
+                   + `词表项也会一起删掉，之后预标注不会再找 ${name}。`)) return;
+        try {
+          const nd = await clsSend(
+            '/api/classes/' + encodeURIComponent(name) + '?purge=1', 'DELETE');
+          toast(`已删除 ${name} 和它的 ${nd.purged_objects} 个对象`);
           afterClassChange(nd);
         } catch (e) { toast(e.message, true); }
       };
