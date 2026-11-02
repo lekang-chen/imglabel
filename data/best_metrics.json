@@ -1,13 +1,13 @@
 {
   "model": "model/best.pt",
   "imgsz": 640,
-  "box_map50": 0.7919,
-  "box_map50_95": 0.5725,
-  "mask_map50": 0.5801,
-  "mask_map50_95": 0.3098,
+  "box_map50": 0.7939,
+  "box_map50_95": 0.5726,
+  "mask_map50": 0.5773,
+  "mask_map50_95": 0.3082,
   "val_images": 30,
-  "dataset_objects": 889,
-  "dataset_edited": 75,
-  "measured_at": "2026-11-02 22:17:37",
+  "dataset_objects": 864,
+  "dataset_edited": 82,
+  "measured_at": "2026-11-02 23:07:52",
   "note": "在最终修正标签上实测；修正条数见 dataset_edited"
 }
