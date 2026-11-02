@@ -2,30 +2,5 @@
  "image": "000107.jpg",
  "width": 640,
  "height": 543,
- "objects": [
-  {
-   "id": "db7549fc",
-   "class": "dining table",
-   "polygon": [
-    [
-     0.0,
-     0.003683241252302026
-    ],
-    [
-     0.0,
-     1.0
-    ],
-    [
-     1.0,
-     1.0
-    ],
-    [
-     1.0,
-     0.003683241252302026
-    ]
-   ],
-   "source": "model",
-   "edited": false
-  }
- ]
+ "objects": []
 }

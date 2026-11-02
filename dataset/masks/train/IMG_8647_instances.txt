@@ -1,5 +1,2 @@
 1 bed
 2 chair
-3 tv
-4 chair
-5 tv

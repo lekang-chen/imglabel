@@ -1,4 +1,4 @@
-1 bed
+1 couch
 2 couch
 3 tv
-4 chair
+4 couch

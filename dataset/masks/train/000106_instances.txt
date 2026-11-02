@@ -2,11 +2,10 @@
 2 tv
 3 laptop
 4 tv
-5 tv
-6 person
-7 cup
-8 bottle
+5 person
+6 cup
+7 bottle
+8 cup
 9 cup
-10 cup
+10 bottle
 11 bottle
-12 bottle

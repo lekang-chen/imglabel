@@ -5,12 +5,12 @@
 5 potted plant
 6 chair
 7 potted plant
-8 potted plant
-9 chair
+8 chair
+9 potted plant
 10 potted plant
-11 potted plant
-12 chair
+11 chair
+12 potted plant
 13 potted plant
-14 potted plant
-15 chair
-16 potted plant
+14 chair
+15 potted plant
+16 tv
