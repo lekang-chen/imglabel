@@ -863,6 +863,76 @@
       A.renderAuto(Object.assign({}, base));
     }
 
+    // ---------- T17 切图前自动保存：不再问「有未保存的修改」 ----------
+    // 起因：保存是 700ms 防抖的。改完一笔立刻点下一张，改动还在内存里。
+    // 老逻辑遇到 S.dirty 直接 confirm 问人，点「确定」就切走——那一笔既没写盘、
+    // 也不会再回到这张图，等于静默丢失。用户看不出「确定 = 丢改」。
+    //
+    // 【为什么测试里要临时关掉 __UITEST__】测试模式下 saveNow 是短路的
+    // （不落盘，防污染真实数据），看不到是否真的发了保存请求。
+    // 这里关掉短路并把 fetch 换成假的：POST 计数、可控地失败，
+    // 既不碰真实标注，又能验证「先保存再切」这条路径。
+    {
+      const realConfirm3 = w.confirm;
+      const realFetch3 = w.fetch;
+      const realUiFlag = w.__UITEST__;
+      const a = S.images[0].name;
+      const b = S.images[1].name;
+
+      let asked = 0;
+      let posts = 0;
+      let failPost = false;
+      w.confirm = () => { asked++; return true; };
+      w.__UITEST__ = false;
+      w.fetch = function (url, opt) {
+        const u = String(url);
+        if (u.indexOf('/api/annotation/') === 0 && opt && opt.method === 'POST') {
+          posts++;
+          if (failPost) {
+            return Promise.resolve({ ok: false, status: 500,
+              json: () => Promise.resolve({ error: '后端挂了' }) });
+          }
+          return Promise.resolve({ ok: true, status: 200,
+            json: () => Promise.resolve({ edited: 3 }) });
+        }
+        return realFetch3.apply(w, arguments);
+      };
+
+      try {
+        // ① 正常：有改动且刚排上防抖保存，立刻切图 —— 应静默保存后切走
+        await A.selectImage(a);
+        asked = 0; posts = 0;
+        S.dirty = true;
+        A.saveSoon();
+        await A.selectImage(b);
+        ok('切图前自动保存，不再弹「未保存」', asked === 0,
+           'confirm 调用了 ' + asked + ' 次');
+        ok('切图确实发出了保存请求', posts >= 1, 'POST ' + posts + ' 次');
+        ok('切图后停在目标图', S.current === b, S.current);
+
+        // ② 保存失败才拦：用户选「取消」就不该切走
+        await A.selectImage(a);
+        asked = 0; failPost = true;
+        w.confirm = () => { asked++; return false; };
+        S.dirty = true;
+        await A.selectImage(b);
+        ok('保存失败时拦一次', asked === 1, 'confirm ' + asked + ' 次');
+        ok('用户选「取消」就留在原图', S.current === a, S.current);
+
+        // ③ 保存失败但用户执意切换 —— 放行，不锁死
+        w.confirm = () => { asked++; return true; };
+        S.dirty = true;
+        await A.selectImage(b);
+        ok('保存失败但用户坚持切换，放行', S.current === b, S.current);
+      } finally {
+        w.confirm = realConfirm3;
+        w.fetch = realFetch3;
+        w.__UITEST__ = realUiFlag;
+        S.dirty = false;
+        if (A.saveTimer) clearTimeout(A.saveTimer);
+      }
+    }
+
     // ---------- 汇总 ----------
     log.unshift('结果：' + pass + ' 通过 / ' + fail + ' 失败\n');
     return log.join('\n');

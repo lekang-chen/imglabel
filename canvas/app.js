@@ -439,7 +439,12 @@ function toggleDrawer(side) {
 }
 
 async function selectImage(name) {
-  if (S.dirty && !confirm('当前图片有未保存的修改，确定切换？')) return;
+  // 换图前先把待保存的改动落盘（见 flushSave 的说明）。
+  // 写成功就静默切走；写不进去才拦一次，并且明确告诉用户「切换=丢弃」。
+  if (!(await flushSave())) {
+    if (!confirm('这张图的改动没能保存成功，现在切换会丢掉它。\n\n'
+                 + '建议先点「取消」，检查网络或服务是否还在，再回来切换。')) return;
+  }
   S.current = name;
   // 窄屏：选完图就把左抽屉收起来，否则画布一直被盖着看不到东西。
   // 桌面端这两个类本来就不存在，调用是无副作用的。
@@ -951,9 +956,9 @@ function saveSoon() {
 
 async function saveNow() {
   saveTimer = null;          // 定时器已经触发，"还有待执行的保存"这一状态结束
-  if (!S.current || !S.anno) return;
+  if (!S.current || !S.anno) return true;
   // 测试模式下不落盘，避免自动化测试污染真实标注数据
-  if (window.__UITEST__) { S.dirty = false; return; }
+  if (window.__UITEST__) { S.dirty = false; return true; }
   try {
     const d = await api('/api/annotation/' + encodeURIComponent(S.current), {
       method: 'POST',
@@ -964,9 +969,26 @@ async function saveNow() {
     $('statEdited').textContent = `${d.edited} / 60`;
     await loadImages();
     await refreshRate();
+    return true;
   } catch (e) {
     toast('保存失败: ' + e.message, true);
+    return false;
   }
+}
+
+// 切图 / 关页之前，把还在防抖窗口里的改动立刻落盘。
+//
+// 【为什么需要】保存是 700ms 防抖的：改完一笔立刻点下一张，改动还在内存里。
+// 早先 selectImage 遇到 S.dirty 直接 confirm 问人，点「确定」就切走了——
+// 那一刻的编辑既没写盘、也不再回到这张图，等于静默丢失。用户在弹窗上
+// 看不出「确定 = 丢改」，只会觉得"改都改完了还问什么"。
+// 现在改成先 flush：写成功就静默切走；只有真的写不进去（断网/后端挂）
+// 才拦一次，且提示语说清后果。
+async function flushSave() {
+  if (!S.dirty) return true;
+  clearTimeout(saveTimer);
+  saveTimer = null;
+  return await saveNow();
 }
 
 // ---------------------------------------------------------------- 事件

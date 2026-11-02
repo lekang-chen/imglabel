@@ -150,7 +150,7 @@ python app.py
 │  ├─ fast_download.py 多线程分片下载器
 │  ├─ test_core.py     核心逻辑自测（133 项）
 │  ├─ test_geom.js     前端几何算法单测（33 项，node 直跑）
-│  ├─ ui_test.js       真实浏览器交互测试（112 项，Edge headless）
+│  ├─ ui_test.js       真实浏览器交互测试（118 项，Edge headless）
 │  ├─ e2e_upload.js    上传→自动预标注端到端测试（7 项，自带清理）
 │  ├─ e2e_delete.py    删除→回收站→恢复端到端测试（18 项，自带清理）
 │  ├─ tunnel.py        外网访问：起服务 + Cloudflare 临时隧道，终端出二维码
@@ -183,12 +183,12 @@ python app.py
 ```bash
 python tools/test_core.py     # 133 项：核心逻辑
 node tools/test_geom.js       # 33 项：前端几何算法
-node tools/ui_test.js         # 112 项：真实浏览器交互 + 手机触屏（需先启动服务）
+node tools/ui_test.js         # 118 项：真实浏览器交互 + 手机触屏（需先启动服务）
 node tools/e2e_upload.js      #  7 项：上传→自动预标注端到端（需先启动服务）
 python tools/e2e_delete.py    # 18 项：删除→回收站→恢复端到端（需先启动服务）
 ```
 
-共 **303 项**。覆盖：
+共 **341 项**。覆盖：
 - 核心层：几何工具、掩码转多边形、三格式一致性、导出自检、边界情况、
   PNG 存盘往返一致性（防调色板模式回归）、闭合环抽稀精度（防形状退化成矩形）、
   **导出坐标越界夹取**（贴边物体不再产出负坐标）、
